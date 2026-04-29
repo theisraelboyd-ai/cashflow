@@ -8,6 +8,7 @@ import { Budget } from './components/Budget.jsx';
 import { Wealth } from './components/Wealth.jsx';
 import { Modal } from './components/Modal.jsx';
 import { Nav } from './components/Nav.jsx';
+import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 
 function AppShell() {
   const { styles } = useTheme();
@@ -23,17 +24,25 @@ function AppShell() {
     );
   }
 
+  // Use page name as the boundary key so changing pages forces a fresh boundary,
+  // letting users navigate away from a crashed page and recover.
   return (
     <div style={styles.app}>
       <div style={styles.shell}>
-        {page === 'home' && <Home data={data} setPage={setPage} setModal={setModal} />}
-        {page === 'activity' && <Activity data={data} setModal={setModal} />}
-        {page === 'calendar' && <CalendarPage data={data} setModal={setModal} />}
-        {page === 'budget' && <Budget data={data} setModal={setModal} />}
-        {page === 'wealth' && <Wealth data={data} setModal={setModal} />}
+        <ErrorBoundary key={page}>
+          {page === 'home' && <Home data={data} setPage={setPage} setModal={setModal} />}
+          {page === 'activity' && <Activity data={data} setModal={setModal} />}
+          {page === 'calendar' && <CalendarPage data={data} setModal={setModal} />}
+          {page === 'budget' && <Budget data={data} setModal={setModal} />}
+          {page === 'wealth' && <Wealth data={data} setModal={setModal} />}
+        </ErrorBoundary>
         <Nav page={page} setPage={setPage} />
       </div>
-      {modal && <Modal modal={modal} setModal={setModal} data={data} update={update} setData={setData} />}
+      {modal && (
+        <ErrorBoundary>
+          <Modal modal={modal} setModal={setModal} data={data} update={update} setData={setData} />
+        </ErrorBoundary>
+      )}
     </div>
   );
 }

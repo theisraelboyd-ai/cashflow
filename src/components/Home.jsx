@@ -76,6 +76,30 @@ export function Home({ data, setPage, setModal }) {
     };
   }, [data]);
 
+  // 30-day Joint pot trajectory - one line per day showing total household account balance
+  const householdSparklinePoints = useMemo(() => {
+    const householdAccounts = data.accounts.filter(isHouseholdAccount);
+    if (householdAccounts.length === 0) return [];
+    const householdIds = new Set(householdAccounts.map((a) => a.id));
+    const householdData = {
+      ...data,
+      accounts: householdAccounts,
+      bills: (data.bills || []).filter((b) => householdIds.has(b.accountId)),
+      externalIncome: (data.externalIncome || []).filter((e) => householdIds.has(e.accountId)),
+      transfers: (data.transfers || []).filter(
+        (tr) => householdIds.has(tr.fromAccountId) || householdIds.has(tr.toAccountId)
+      ),
+      jobs: [],
+      salaries: [],
+    };
+    try {
+      const proj = projectBalances(householdData, today, horizon, { includeSpeculative: false, likelyWeight: 0.75 });
+      return (proj.dayPoints || []).map((p) => ({ value: p.total, date: p.date }));
+    } catch {
+      return [];
+    }
+  }, [data, today]);
+
   // Greeting becomes personalised when viewing as an earner
   const earnerView = data.earners.find((e) => e.id === viewingAs);
   const greetingLine = earnerView ? `${greeting()}, ${earnerView.name}` : greeting();
@@ -138,7 +162,7 @@ export function Home({ data, setPage, setModal }) {
 
       {/* Joint health - only show if there are household accounts with activity */}
       {householdHealth && householdHealth.hasContent && (
-        <JointHealthCard health={householdHealth} />
+        <JointHealthCard health={householdHealth} sparklinePoints={householdSparklinePoints} />
       )}
 
       <div style={styles.sectionHead}>
@@ -189,7 +213,7 @@ export function Home({ data, setPage, setModal }) {
   );
 }
 
-function JointHealthCard({ health }) {
+function JointHealthCard({ health, sparklinePoints }) {
   const { t, privacy } = useTheme();
   const isHealthy = health.surplus >= 0;
   const surplusColor = isHealthy ? t.income : t.expense;
@@ -227,6 +251,11 @@ function JointHealthCard({ health }) {
           {isHealthy ? 'sustaining' : 'shortfall'}
         </div>
       </div>
+
+      {/* Sparkline showing 30-day household pot trajectory */}
+      {sparklinePoints && sparklinePoints.length > 1 && (
+        <Sparkline points={sparklinePoints} />
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: t.textDim, paddingBottom: 6 }}>
         <span>Inflow / mo</span>
@@ -365,6 +394,57 @@ function QuickCard({ icon, label, value, sub, onClick, noPrivacy }) {
         {value}
       </div>
       <div style={{ fontSize: 11, color: t.textFaint, marginTop: 4 }}>{sub}</div>
+    </div>
+  );
+}
+
+// Tiny inline sparkline for the Joint health card.
+function Sparkline({ points }) {
+  const { t } = useTheme();
+  if (!points || points.length < 2) return null;
+  const W = 280;
+  const H = 38;
+  const padX = 4;
+
+  const values = points.map((p) => p.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(1, max - min);
+  // Add 10% padding on top/bottom so endpoints aren't hugging the edges
+  const minP = min - range * 0.1;
+  const maxP = max + range * 0.1;
+  const yRange = Math.max(1, maxP - minP);
+
+  const x = (i) => padX + (i / (points.length - 1)) * (W - padX * 2);
+  const y = (v) => 4 + (1 - (v - minP) / yRange) * (H - 8);
+
+  // Direction across the whole window
+  const startVal = values[0];
+  const endVal = values[values.length - 1];
+  const stroke = endVal >= startVal ? t.income : t.expense;
+
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(p.value)}`).join(' ');
+  const fillPath = `${linePath} L ${x(points.length - 1)} ${H} L ${x(0)} ${H} Z`;
+
+  return (
+    <div style={{ marginBottom: 12, marginTop: -2 }}>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: 'block', height: 38 }}>
+        <defs>
+          <linearGradient id="sparkFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity="0.15" />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={fillPath} fill="url(#sparkFill)" />
+        <path d={linePath} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+        <circle cx={x(points.length - 1)} cy={y(endVal)} r="2.5" fill={stroke} />
+      </svg>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: t.textFaint, marginTop: 2, padding: '0 2px', letterSpacing: 0.5 }}>
+        <span>30 days</span>
+        <span style={{ color: stroke, fontWeight: 600 }}>
+          {endVal >= startVal ? '↑' : '↓'} £{Math.abs(endVal - startVal).toFixed(0)}
+        </span>
+      </div>
     </div>
   );
 }

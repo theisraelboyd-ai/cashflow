@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { AlertTriangle, ChevronLeft, ChevronRight, Eye, EyeOff, Home } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, monthLabel, monthLongLabel, startOfMonth, endOfMonth, addMonths, dayLabel, dateKey } from '../lib/format.js';
 import { projectBalances, generateEvents } from '../lib/projection.js';
@@ -8,13 +8,78 @@ import { PageHeader, Toggle, Money, ViewingAsSwitch } from './atoms.jsx';
 import { TrajectoryChart } from './TrajectoryChart.jsx';
 
 export function Budget({ data, setModal }) {
-  const { styles, t, privacy, viewingAs } = useTheme();
+  const { styles, t, privacy, viewingAs, togglePrivacy } = useTheme();
   const [horizon, setHorizon] = useState(3);
   const [mode, setMode] = useState('realistic');
   // monthOffset: 0 = current month, +1 = next month, -1 = previous, etc.
   const [monthOffset, setMonthOffset] = useState(0);
+  // budgetView: 'personal' (Personal + Savings, excludes Joint) or 'joint' (only Joint)
+  const [budgetView, setBudgetView] = useState('personal');
 
   const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
+
+  // Filter accounts based on budget view: 'personal' excludes household accounts,
+  // 'joint' shows only household accounts.
+  const budgetData = useMemo(() => {
+    if (budgetView === 'joint') {
+      const householdAccounts = (viewData.accounts || []).filter(
+        (a) => a.ownerId === 'household' || !a.ownerId
+      );
+      const householdIds = new Set(householdAccounts.map((a) => a.id));
+      return {
+        ...viewData,
+        accounts: householdAccounts,
+        bills: (viewData.bills || []).filter((b) => householdIds.has(b.accountId)),
+        externalIncome: (viewData.externalIncome || []).filter((e) => householdIds.has(e.accountId)),
+        // Transfers where Joint is involved (in or out) — show but their effect on
+        // non-household accounts is implicit
+        transfers: (viewData.transfers || []).filter(
+          (tr) => householdIds.has(tr.fromAccountId) || householdIds.has(tr.toAccountId)
+        ),
+        // Jobs/salaries don't directly affect Joint unless they pay there
+        jobs: [],
+        salaries: [],
+      };
+    }
+    // 'personal' view: exclude household accounts
+    const personalAccounts = (viewData.accounts || []).filter(
+      (a) => a.ownerId !== 'household' && a.ownerId
+    );
+    const personalIds = new Set(personalAccounts.map((a) => a.id));
+    return {
+      ...viewData,
+      accounts: personalAccounts,
+      bills: (viewData.bills || []).filter((b) => personalIds.has(b.accountId)),
+      externalIncome: (viewData.externalIncome || []).filter((e) => personalIds.has(e.accountId)),
+      transfers: (viewData.transfers || []).filter(
+        (tr) => personalIds.has(tr.fromAccountId) || personalIds.has(tr.toAccountId)
+      ),
+    };
+  }, [viewData, budgetView]);
+
+  // Visible account toggles for the chart - default all accounts visible
+  const [visibleAccountIds, setVisibleAccountIds] = useState(null);  // null = all visible
+
+  // Reset visible accounts when accounts list changes (e.g. switching budgetView)
+  useEffect(() => {
+    setVisibleAccountIds(new Set(budgetData.accounts.map((a) => a.id)));
+  }, [budgetData.accounts]);
+
+  const toggleAccountVisible = (accountId) => {
+    setVisibleAccountIds((prev) => {
+      const next = new Set(prev || budgetData.accounts.map((a) => a.id));
+      if (next.has(accountId)) next.delete(accountId);
+      else next.add(accountId);
+      return next;
+    });
+  };
+
+  // Show Personal/Joint toggle only if there's both kinds of account in the data.
+  const hasMixedAccounts = useMemo(() => {
+    const hasHousehold = (viewData.accounts || []).some((a) => a.ownerId === 'household' || !a.ownerId);
+    const hasPersonal = (viewData.accounts || []).some((a) => a.ownerId && a.ownerId !== 'household');
+    return hasHousehold && hasPersonal;
+  }, [viewData.accounts]);
 
   const onTapEvent = (ev) => {
     if (!setModal) return;
@@ -36,65 +101,93 @@ export function Budget({ data, setModal }) {
     }
   };
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
 
-  // Projection start = beginning of (current month + offset)
-  const projStart = startOfMonth(addMonths(today, monthOffset));
-  const endDate = endOfMonth(addMonths(projStart, horizon - 1));
+  // Memoise projStart and endDate so they don't get re-instantiated on every render
+  const projStart = useMemo(
+    () => startOfMonth(addMonths(today, monthOffset)),
+    [today, monthOffset]
+  );
+  const endDate = useMemo(
+    () => endOfMonth(addMonths(projStart, horizon - 1)),
+    [projStart, horizon]
+  );
 
   const projection = useMemo(() => {
-    const opts = mode === 'realistic'
-      ? { includeSpeculative: false, likelyWeight: 0.75 }
-      : { includeSpeculative: true, likelyWeight: 1.0 };
+    try {
+      const opts = mode === 'realistic'
+        ? { includeSpeculative: false, likelyWeight: 0.75 }
+        : { includeSpeculative: true, likelyWeight: 1.0 };
 
-    // Compute the balance at projStart by reverse-applying events between today and projStart.
-    // If projStart is in the past: subtract events that have happened since projStart.
-    // If projStart is in the future: add events that will happen between now and projStart.
-    const adjustedAccounts = viewData.accounts.map((a) => {
-      let bal = Number(a.balance);
-      if (projStart < today) {
-        // Reverse events that occurred from projStart up to today
-        const past = generateEvents(viewData, projStart, today, opts);
-        past.forEach((ev) => {
-          if (ev.accountId === a.id && ev.date <= today) bal -= ev.amount;
-        });
-      } else if (projStart > today) {
-        // Apply events that will occur between today and projStart
-        const future = generateEvents(viewData, today, projStart, opts);
-        future.forEach((ev) => {
-          if (ev.accountId === a.id && ev.date < projStart) bal += ev.amount;
-        });
-      }
-      return { ...a, balance: bal };
-    });
+      // Compute the balance at projStart by reverse-applying events between today and projStart.
+      const adjustedAccounts = (budgetData.accounts || []).map((a) => {
+        let bal = Number(a.balance) || 0;
+        try {
+          if (projStart < today) {
+            const past = generateEvents(budgetData, projStart, today, opts) || [];
+            past.forEach((ev) => {
+              if (ev && ev.accountId === a.id && ev.date && ev.date <= today) {
+                bal -= Number(ev.amount) || 0;
+              }
+            });
+          } else if (projStart > today) {
+            const future = generateEvents(budgetData, today, projStart, opts) || [];
+            future.forEach((ev) => {
+              if (ev && ev.accountId === a.id && ev.date && ev.date < projStart) {
+                bal += Number(ev.amount) || 0;
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('Reverse-projection failed for account', a.id, e);
+        }
+        return { ...a, balance: bal };
+      });
 
-    return projectBalances({ ...viewData, accounts: adjustedAccounts }, projStart, endDate, opts);
-  }, [viewData, horizon, mode, monthOffset]);
+      const result = projectBalances({ ...budgetData, accounts: adjustedAccounts }, projStart, endDate, opts);
+      // Ensure shape
+      return {
+        dayPoints: Array.isArray(result?.dayPoints) ? result.dayPoints : [],
+        events: Array.isArray(result?.events) ? result.events : [],
+      };
+    } catch (e) {
+      console.error('Projection failed', e);
+      return { dayPoints: [], events: [] };
+    }
+  }, [budgetData, horizon, mode, monthOffset, projStart, endDate, today]);
 
   const { dayPoints, events } = projection;
-  const startTotal = dayPoints[0]?.total || 0;
-  const endTotal = dayPoints[dayPoints.length - 1]?.total || 0;
-  const firstNegative = dayPoints.find((p) => p.total < 0);
+  const startTotal = dayPoints[0]?.total ?? 0;
+  const endTotal = dayPoints[dayPoints.length - 1]?.total ?? 0;
+  const firstNegative = dayPoints.find((p) => p && p.total < 0);
 
   const monthSummary = useMemo(() => {
     const months = [];
+    if (!Array.isArray(dayPoints) || dayPoints.length === 0) return months;
     for (let i = 0; i < horizon; i++) {
-      const mStart = startOfMonth(addMonths(projStart, i));
-      const mEnd = endOfMonth(addMonths(projStart, i));
-      const monthEvents = events.filter((ev) => ev.date >= mStart && ev.date <= mEnd);
-      const income = monthEvents.filter((e) => e.amount > 0 && e.type !== 'transfer-in').reduce((s, e) => s + e.amount, 0);
-      const outgoings = monthEvents.filter((e) => e.amount < 0 && e.type !== 'transfer-out').reduce((s, e) => s + Math.abs(e.amount), 0);
-      const startPoint = dayPoints.find((p) => dateKey(p.date) === dateKey(mStart)) || dayPoints[0];
-      const endPoint = [...dayPoints].reverse().find((p) => p.date <= mEnd) || dayPoints[dayPoints.length - 1];
-      months.push({
-        label: monthLabel(mStart),
-        income,
-        outgoings,
-        net: income - outgoings,
-        startBalance: startPoint?.total || 0,
-        endBalance: endPoint?.total || 0,
-      });
+      try {
+        const mStart = startOfMonth(addMonths(projStart, i));
+        const mEnd = endOfMonth(addMonths(projStart, i));
+        const monthEvents = (events || []).filter((ev) => ev?.date && ev.date >= mStart && ev.date <= mEnd);
+        const income = monthEvents.filter((e) => e.amount > 0 && e.type !== 'transfer-in').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+        const outgoings = monthEvents.filter((e) => e.amount < 0 && e.type !== 'transfer-out').reduce((s, e) => s + Math.abs(Number(e.amount) || 0), 0);
+        const startPoint = dayPoints.find((p) => p?.date && dateKey(p.date) === dateKey(mStart)) || dayPoints[0];
+        const endPoint = [...dayPoints].reverse().find((p) => p?.date && p.date <= mEnd) || dayPoints[dayPoints.length - 1];
+        months.push({
+          label: monthLabel(mStart),
+          income,
+          outgoings,
+          net: income - outgoings,
+          startBalance: startPoint?.total ?? 0,
+          endBalance: endPoint?.total ?? 0,
+        });
+      } catch (e) {
+        console.warn('Month summary failed for offset', i, e);
+      }
     }
     return months;
   }, [events, dayPoints, horizon, projStart]);
@@ -109,7 +202,29 @@ export function Budget({ data, setModal }) {
 
   return (
     <div style={styles.page}>
-      <PageHeader title="Budget" eyebrow="Cash flow projection" right={<ViewingAsSwitch earners={data.earners} />} />
+      <PageHeader
+        title="Budget"
+        eyebrow="Cash flow projection"
+        right={
+          <>
+            <ViewingAsSwitch earners={data.earners} />
+            <button style={styles.iconBtn} onClick={togglePrivacy} title="Toggle privacy">
+              {privacy ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </>
+        }
+      />
+
+      {/* Personal vs Joint view toggle - only shows if there's at least one household and one personal account */}
+      {hasMixedAccounts && (
+        <div style={styles.toggleRow}>
+          <Toggle active={budgetView === 'personal'} onClick={() => setBudgetView('personal')}>Personal</Toggle>
+          <Toggle active={budgetView === 'joint'} onClick={() => setBudgetView('joint')}>
+            <Home size={11} style={{ marginRight: 4, verticalAlign: -1 }} />
+            Joint
+          </Toggle>
+        </div>
+      )}
 
       <div style={styles.toggleRow}>
         <Toggle active={mode === 'realistic'} onClick={() => setMode('realistic')}>Realistic</Toggle>
@@ -182,8 +297,68 @@ export function Budget({ data, setModal }) {
         )}
       </div>
 
+      {/* Per-account toggles for the chart - only show if 2+ accounts in budget view */}
+      {budgetData.accounts.length > 1 && (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            marginTop: 14,
+            marginBottom: -2,
+            paddingLeft: 4,
+          }}
+        >
+          <span style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, alignSelf: 'center', marginRight: 4 }}>
+            Show:
+          </span>
+          {budgetData.accounts.map((acc) => {
+            const isVisible = !visibleAccountIds || visibleAccountIds.has(acc.id);
+            const accColor = t.accountColors[acc.colorIdx ?? 0] || t.accent;
+            return (
+              <button
+                key={acc.id}
+                onClick={() => toggleAccountVisible(acc.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '5px 10px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  background: isVisible ? t.bgElev : 'transparent',
+                  color: isVisible ? t.text : t.textFaint,
+                  border: `1px solid ${isVisible ? accColor : t.border}`,
+                  borderRadius: 999,
+                  cursor: 'pointer',
+                  opacity: isVisible ? 1 : 0.55,
+                  transition: 'opacity 0.15s, background 0.15s',
+                }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    background: accColor,
+                    opacity: isVisible ? 1 : 0.4,
+                  }}
+                />
+                {acc.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div style={{ marginTop: 18 }}>
-        <TrajectoryChart dayPoints={dayPoints} events={events} onTapEvent={onTapEvent} />
+        <TrajectoryChart
+          dayPoints={dayPoints}
+          events={events}
+          onTapEvent={onTapEvent}
+          accounts={budgetData.accounts}
+          visibleAccountIds={visibleAccountIds}
+        />
       </div>
 
       <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 12 }}>

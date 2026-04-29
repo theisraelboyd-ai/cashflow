@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, fmtShort, dayLabel, dateKey, monthLabel } from '../lib/format.js';
 
-export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
+export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], visibleAccountIds = null }) {
   const { t, privacy, isDesktop } = useTheme();
   const W = isDesktop ? 800 : 320;
   const H = isDesktop ? 280 : 200;
@@ -12,7 +12,8 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
 
   const eventsByDayKey = useMemo(() => {
     const map = new Map();
-    events.forEach((ev) => {
+    (events || []).forEach((ev) => {
+      if (!ev || !ev.date) return;
       const k = dateKey(ev.date);
       if (!map.has(k)) map.set(k, []);
       map.get(k).push(ev);
@@ -20,18 +21,22 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
     return map;
   }, [events]);
 
-  if (!dayPoints || dayPoints.length === 0) return null;
+  // Don't return early here — that violates rules of hooks since other hooks
+  // are declared further down. Use safeDayPoints throughout, and return the
+  // empty placeholder at the *end* of the component, after all hooks have run.
+  const safeDayPoints = (Array.isArray(dayPoints) && dayPoints.length > 0) ? dayPoints : [];
+  const hasData = safeDayPoints.length > 0;
 
   const padTop = 14;
   const padBottom = 22;
   const padX = 10;
 
   const xDay = (i) =>
-    padX + (i / Math.max(1, dayPoints.length - 1)) * (W - padX * 2);
+    padX + (i / Math.max(1, safeDayPoints.length - 1)) * (W - padX * 2);
 
-  const totals = dayPoints.map((p) => p.total);
-  const maxBalance = Math.max(...totals, 100);
-  const minBalance = Math.min(...totals, 0);
+  const totals = safeDayPoints.map((p) => p.total || 0);
+  const maxBalance = totals.length ? Math.max(...totals, 100) : 100;
+  const minBalance = totals.length ? Math.min(...totals, 0) : 0;
 
   // No artificial floor - let chart show the real magnitude. Auto-scale.
   let yMin = minBalance;
@@ -46,15 +51,18 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
   };
 
   const yZero = y(0);
-  const linePath = dayPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xDay(i)} ${y(p.total)}`).join(' ');
-  const fillPath =
-    `M ${xDay(0)} ${yZero} ` +
-    dayPoints.map((p, i) => `L ${xDay(i)} ${y(p.total)}`).join(' ') +
-    ` L ${xDay(dayPoints.length - 1)} ${yZero} Z`;
+  const linePath = safeDayPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xDay(i)} ${y(p.total || 0)}`).join(' ');
+  const fillPath = safeDayPoints.length > 0
+    ? `M ${xDay(0)} ${yZero} ` +
+      safeDayPoints.map((p, i) => `L ${xDay(i)} ${y(p.total || 0)}`).join(' ') +
+      ` L ${xDay(safeDayPoints.length - 1)} ${yZero} Z`
+    : '';
 
-  // Compute coloured segments for long horizons. We only segment if there are
-  // many data points - on short horizons the dots themselves carry the info.
-  const longHorizon = dayPoints.length > 90;
+  // Compute coloured segments. Always-on now - the convention is
+  // green = balance going up, red = balance going down, sage = stable.
+  // Threshold is small enough to catch real changes, but large enough to
+  // stop noise pixels flipping color back and forth.
+  const longHorizon = safeDayPoints.length > 90;
 
   const segmentColor = (kind) => {
     if (kind === 'down') return t.expense;
@@ -63,36 +71,55 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
   };
 
   const lineSegments = useMemo(() => {
-    if (!longHorizon || dayPoints.length < 2) return [];
+    if (safeDayPoints.length < 2) return [];
     const classifySeg = (a, b) => {
       const delta = b - a;
-      const threshold = Math.max(50, Math.abs(a) * 0.005);
+      // Threshold scales with magnitude — small movements don't trigger colour change.
+      const threshold = Math.max(20, Math.abs(a) * 0.003);
       if (delta < -threshold) return 'down';
       if (delta > threshold) return 'up';
       return 'flat';
     };
     const segments = [];
-    let cur = { kind: classifySeg(dayPoints[0].total, dayPoints[1].total), startIdx: 0 };
-    for (let i = 1; i < dayPoints.length; i++) {
-      const k = classifySeg(dayPoints[i - 1].total, dayPoints[i].total);
+    let cur = { kind: classifySeg(safeDayPoints[0].total, safeDayPoints[1].total), startIdx: 0 };
+    for (let i = 1; i < safeDayPoints.length; i++) {
+      const k = classifySeg(safeDayPoints[i - 1].total, safeDayPoints[i].total);
       if (k !== cur.kind) {
         segments.push({ ...cur, endIdx: i });
         cur = { kind: k, startIdx: i };
       }
     }
-    segments.push({ ...cur, endIdx: dayPoints.length - 1 });
+    segments.push({ ...cur, endIdx: safeDayPoints.length - 1 });
     return segments;
-  }, [dayPoints, longHorizon]);
+  }, [safeDayPoints]);
 
-  const firstNegativeIdx = dayPoints.findIndex((p) => p.total < 0);
+  // Per-account paths for overlay lines.
+  // We need to recompute the y-axis scale to fit all account values, not just total.
+  // But for visual clarity we'll plot each account using its own y at the same scale
+  // as the main chart, so they share the chart space.
+  const perAccountPaths = useMemo(() => {
+    if (!accounts || accounts.length === 0 || safeDayPoints.length === 0) return [];
+    const visibleIds = visibleAccountIds || new Set(accounts.map((a) => a.id));
+    return accounts
+      .filter((a) => visibleIds.has(a.id))
+      .map((a) => {
+        const path = safeDayPoints.map((p, i) => {
+          const balance = (p.perAccount && p.perAccount[a.id] !== undefined) ? p.perAccount[a.id] : 0;
+          return `${i === 0 ? 'M' : 'L'} ${xDay(i)} ${y(balance)}`;
+        }).join(' ');
+        return { id: a.id, name: a.name, path, color: t.accountColors[a.colorIdx ?? 0] || t.accent };
+      });
+  }, [accounts, visibleAccountIds, safeDayPoints, t]);
+
+  const firstNegativeIdx = safeDayPoints.findIndex((p) => p.total < 0);
 
   // Find lowest point for callout
   let lowestIdx = 0;
-  for (let i = 1; i < dayPoints.length; i++) {
-    if (dayPoints[i].total < dayPoints[lowestIdx].total) lowestIdx = i;
+  for (let i = 1; i < safeDayPoints.length; i++) {
+    if (safeDayPoints[i].total < safeDayPoints[lowestIdx].total) lowestIdx = i;
   }
-  const lowestPoint = dayPoints[lowestIdx];
-  const showLowest = lowestPoint.total < 0;
+  const lowestPoint = safeDayPoints[lowestIdx] || null;
+  const showLowest = lowestPoint && lowestPoint.total < 0;
 
   // Month boundaries with auto-thinning based on width-per-month
   const monthBoundaries = useMemo(() => {
@@ -319,7 +346,27 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
   // Reset sticky when dayPoints change (new horizon, new data)
   useEffect(() => {
     setStickyIdx(null);
-  }, [dayPoints.length]);
+  }, [safeDayPoints.length]);
+
+  // After all hooks: handle empty data
+  if (!hasData) {
+    return (
+      <div
+        style={{
+          background: t.bgElev,
+          border: `1px solid ${t.border}`,
+          borderRadius: 12,
+          padding: '32px 16px',
+          textAlign: 'center',
+          color: t.textFaint,
+          fontSize: 13,
+          fontStyle: 'italic',
+        }}
+      >
+        No data to display in this range
+      </div>
+    );
+  }
 
   return (
     <div
@@ -417,36 +464,40 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
 
         <path d={fillPath} fill="url(#gradPos)" />
 
-        {longHorizon ? (
-          // Coloured segments based on direction
-          lineSegments.map((seg, i) => {
-            const ptsPath = [];
-            for (let j = seg.startIdx; j <= seg.endIdx; j++) {
-              ptsPath.push(`${j === seg.startIdx ? 'M' : 'L'} ${xDay(j)} ${y(dayPoints[j].total)}`);
-            }
-            return (
-              <path
-                key={`seg-${i}`}
-                d={ptsPath.join(' ')}
-                fill="none"
-                stroke={segmentColor(seg.kind)}
-                strokeWidth="2"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                opacity={seg.kind === 'flat' ? 0.6 : 0.95}
-              />
-            );
-          })
-        ) : (
+        {/* Per-account overlay lines (drawn first so they sit underneath the total) */}
+        {perAccountPaths.map((acc) => (
           <path
-            d={linePath}
+            key={`acc-${acc.id}`}
+            d={acc.path}
             fill="none"
-            stroke={t.accent}
-            strokeWidth="2"
+            stroke={acc.color}
+            strokeWidth="1.4"
             strokeLinejoin="round"
             strokeLinecap="round"
+            strokeDasharray="3 3"
+            opacity="0.7"
           />
-        )}
+        ))}
+
+        {/* Always coloured segments based on direction */}
+        {lineSegments.map((seg, i) => {
+          const ptsPath = [];
+          for (let j = seg.startIdx; j <= seg.endIdx; j++) {
+            ptsPath.push(`${j === seg.startIdx ? 'M' : 'L'} ${xDay(j)} ${y(safeDayPoints[j].total)}`);
+          }
+          return (
+            <path
+              key={`seg-${i}`}
+              d={ptsPath.join(' ')}
+              fill="none"
+              stroke={segmentColor(seg.kind)}
+              strokeWidth="2.2"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              opacity={seg.kind === 'flat' ? 0.7 : 0.95}
+            />
+          );
+        })}
 
         {billDays.map((bd, i) => (
           <circle
