@@ -151,7 +151,7 @@ export function CalendarPage({ data, setModal }) {
         <LegendKey color={t.secondary} label="working" tint />
         <LegendKey color={t.income} label="income" />
         <LegendKey color={t.expense} label="bill" />
-        <LegendKey color={t.textDim} label="transfer" />
+        <LegendKey color={t.secondary} label="transfer" />
       </div>
 
       {selectedDay && (
@@ -171,10 +171,11 @@ export function CalendarPage({ data, setModal }) {
 function DayCell({ day, inMonth, isToday, isSelected, isWorking, events, onClick }) {
   const { t, privacy } = useTheme();
 
-  // Sort events: income first, then bills, then transfers
+  // Consolidate transfer pairs first, then sort
   const sortedEvents = useMemo(() => {
-    const order = { 'salary': 0, 'job': 0, 'extincome': 0, 'transfer-in': 1, 'bill': 2, 'transfer-out': 3 };
-    return [...events].sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
+    const consolidated = consolidateTransfers(events);
+    const order = { 'salary': 0, 'job': 0, 'extincome': 0, 'transfer': 1, 'bill': 2 };
+    return [...consolidated].sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
   }, [events]);
 
   const visiblePills = sortedEvents.slice(0, 2);
@@ -255,14 +256,22 @@ function DayCell({ day, inMonth, isToday, isSelected, isWorking, events, onClick
 }
 
 function EventPill({ ev, privacy, t }) {
-  const isIncome = ev.amount > 0 && ev.type !== 'transfer-in';
-  const isTransfer = ev.type === 'transfer-in' || ev.type === 'transfer-out';
-  const color = isIncome ? t.income : isTransfer ? t.textDim : t.expense;
-  const bg = isIncome ? t.incomeBg : isTransfer ? t.bgInset : t.expenseBg;
+  const isTransfer = ev.type === 'transfer';
+  const isIncome = !isTransfer && ev.amount > 0;
+  const color = isIncome ? t.income : isTransfer ? t.secondary : t.expense;
+  const bg = isIncome ? t.incomeBg : isTransfer ? t.secondarySoft : t.expenseBg;
 
-  // Truncate label aggressively to fit
-  const label = (ev.label || '').slice(0, 10);
-  const amountShort = fmtShort(Math.abs(ev.amount)).replace('£', '£');
+  // For transfer, label is "From → To" abbreviated
+  let label, amountShort;
+  if (isTransfer) {
+    const fromInit = (ev.fromName || '?')[0];
+    const toInit = (ev.toName || '?')[0];
+    label = `${fromInit}→${toInit}`;
+    amountShort = fmtShort(ev.amount).replace('£', '£');
+  } else {
+    label = (ev.label || '').slice(0, 10);
+    amountShort = fmtShort(Math.abs(ev.amount)).replace('£', '£');
+  }
 
   return (
     <div
@@ -300,7 +309,7 @@ function EventPill({ ev, privacy, t }) {
         }}
         className={privacy ? 'private-blur' : ''}
       >
-        {isIncome ? '+' : '−'}{amountShort}
+        {isTransfer ? '' : isIncome ? '+' : '−'}{amountShort}
       </div>
     </div>
   );
@@ -320,6 +329,45 @@ function LegendKey({ color, label, tint }) {
       {label}
     </span>
   );
+}
+
+// Consolidate transfer-out / transfer-in pairs into a single transfer row.
+// Each transfer generates two events (one per leg). When the day detail shows
+// both legs in the same list, it's confusing because the labels are written
+// from each account's perspective and the signs disagree.
+function consolidateTransfers(events) {
+  const consolidated = [];
+  const seenTransfers = new Set();
+
+  events.forEach((ev) => {
+    if (ev.type === 'transfer-out' || ev.type === 'transfer-in') {
+      if (seenTransfers.has(ev.transferId)) return;
+      seenTransfers.add(ev.transferId);
+      // Find both legs
+      const out = events.find((x) => x.transferId === ev.transferId && x.type === 'transfer-out');
+      const inEv = events.find((x) => x.transferId === ev.transferId && x.type === 'transfer-in');
+      if (!out || !inEv) {
+        // Single leg only (shouldn't happen but be safe)
+        consolidated.push(ev);
+        return;
+      }
+      // Extract account names from labels (out label is "→ X", in label is "← Y")
+      const toName = (out.label || '').replace(/^→\s*/, '');
+      const fromName = (inEv.label || '').replace(/^←\s*/, '');
+      consolidated.push({
+        type: 'transfer',
+        amount: Math.abs(out.amount),
+        fromName,
+        toName,
+        transferId: ev.transferId,
+        date: ev.date,
+      });
+    } else {
+      consolidated.push(ev);
+    }
+  });
+
+  return consolidated;
 }
 
 function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
@@ -410,28 +458,68 @@ function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
           <div style={{ fontSize: 10, color: t.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, fontWeight: 600 }}>
             Cash flow
           </div>
-          {events.map((ev, i) => (
-            <div
-              key={i}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '10px 12px',
-                marginBottom: 4,
-                background: ev.amount > 0 ? t.incomeBg : t.expenseBg,
-                borderRadius: 6,
-              }}
-            >
-              <span style={{ color: t.text, fontSize: 14, fontWeight: 500 }}>{ev.label}</span>
-              <Money
-                value={ev.amount}
-                sign={ev.amount > 0 ? '+' : '-'}
-                color={ev.amount > 0 ? t.income : t.expense}
-                size={16}
-              />
-            </div>
-          ))}
+          {consolidateTransfers(events).map((ev, i) => {
+            // Transfer rows get neutral styling to avoid the +/- confusion
+            if (ev.type === 'transfer') {
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    marginBottom: 4,
+                    background: t.secondarySoft,
+                    border: `1px solid ${t.secondary}33`,
+                    borderRadius: 6,
+                  }}
+                >
+                  <span style={{ color: t.text, fontSize: 14, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: t.secondary, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>
+                      transfer
+                    </span>
+                    {ev.fromName} → {ev.toName}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: "'Cormorant Garamond', serif",
+                      fontWeight: t.weightAmount,
+                      fontSize: 16,
+                      color: t.secondary,
+                    }}
+                    className={privacy ? 'private-blur' : ''}
+                  >
+                    {fmt(ev.amount)}
+                  </span>
+                </div>
+              );
+            }
+            // Normal event row
+            return (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '10px 12px',
+                  marginBottom: 4,
+                  background: ev.amount > 0 ? t.incomeBg : t.expenseBg,
+                  border: `1px solid ${ev.amount > 0 ? t.income : t.expense}33`,
+                  borderRadius: 6,
+                }}
+              >
+                <span style={{ color: t.text, fontSize: 14, fontWeight: 500 }}>{ev.label}</span>
+                <Money
+                  value={ev.amount}
+                  sign={ev.amount > 0 ? '+' : '-'}
+                  color={ev.amount > 0 ? t.income : t.expense}
+                  size={16}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

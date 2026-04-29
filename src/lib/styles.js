@@ -1,7 +1,8 @@
 // Styles are theme-aware and respect the text scale setting.
 // Pass the scale factor to scale every font-size proportionally.
+// isDesktop controls layout — wider shell, sidebar nav.
 
-export function buildStyles(t, scale = 1) {
+export function buildStyles(t, scale = 1, isDesktop = false) {
   const sz = (n) => Math.round(n * scale);
 
   return {
@@ -13,13 +14,16 @@ export function buildStyles(t, scale = 1) {
       transition: 'background 0.25s ease, color 0.25s ease',
     },
     shell: {
-      maxWidth: 480,
+      maxWidth: isDesktop ? 1100 : 480,
       margin: '0 auto',
-      paddingBottom: 80,
+      paddingBottom: isDesktop ? 24 : 80,
+      paddingLeft: isDesktop ? 220 : 0,  // Space for sidebar nav on desktop
       minHeight: '100vh',
+      position: 'relative',
     },
     page: {
-      padding: '24px 20px 40px',
+      padding: isDesktop ? '32px 40px 40px' : '24px 20px 40px',
+      maxWidth: isDesktop ? 880 : '100%',
     },
     header: {
       display: 'flex',
@@ -228,21 +232,23 @@ export function buildStyles(t, scale = 1) {
       background: 'rgba(0, 0, 0, 0.55)',
       zIndex: 100,
       display: 'flex',
-      alignItems: 'flex-end',
+      alignItems: isDesktop ? 'center' : 'flex-end',
       justifyContent: 'center',
       animation: 'fadeIn 0.2s',
+      padding: isDesktop ? 20 : 0,
     },
     modalSheet: {
       background: t.bg,
       width: '100%',
       maxWidth: 480,
-      maxHeight: '90vh',
+      maxHeight: isDesktop ? '85vh' : '90vh',
       overflowY: 'auto',
+      borderRadius: isDesktop ? 16 : 0,
       borderTopLeftRadius: 24,
       borderTopRightRadius: 24,
       padding: '12px 20px 32px',
       border: `1px solid ${t.border}`,
-      animation: 'slideUp 0.25s ease-out',
+      animation: isDesktop ? 'fadeIn 0.2s' : 'slideUp 0.25s ease-out',
     },
     modalHandle: {
       width: 40,
@@ -339,7 +345,20 @@ export function buildStyles(t, scale = 1) {
       border: `1px solid ${t.border}`,
       borderRadius: 12,
     },
-    nav: {
+    nav: isDesktop ? {
+      position: 'fixed',
+      top: 0,
+      left: 'max(0px, calc((100vw - 1100px) / 2))',
+      width: 200,
+      height: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      background: t.bgElev,
+      borderRight: `1px solid ${t.border}`,
+      zIndex: 50,
+      padding: '24px 16px',
+      gap: 4,
+    } : {
       position: 'fixed',
       bottom: 0,
       left: 0,
@@ -353,6 +372,7 @@ export function buildStyles(t, scale = 1) {
       margin: '0 auto',
       zIndex: 50,
     },
+    isDesktop,
     sz,  // expose the scale function for components
   };
 }

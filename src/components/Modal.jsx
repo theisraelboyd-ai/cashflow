@@ -8,12 +8,12 @@ import { ModalHeader, Field, Seg, OwnerSelector } from './atoms.jsx';
 import { exportData, importDataFromFile, defaultData } from '../hooks/useStoredData.js';
 
 export function Modal({ modal, setModal, data, update, setData }) {
-  const { styles } = useTheme();
+  const { styles, isDesktop } = useTheme();
   const close = () => setModal(null);
   return (
     <div style={styles.modalOverlay} onClick={close}>
       <div style={styles.modalSheet} onClick={(e) => e.stopPropagation()}>
-        <div style={styles.modalHandle} />
+        {!isDesktop && <div style={styles.modalHandle} />}
         {modal.type === 'account' && <AccountForm item={modal.payload} data={data} update={update} close={close} />}
         {modal.type === 'reconcile' && <ReconcileForm acc={modal.payload} data={data} update={update} close={close} setModal={setModal} />}
         {modal.type === 'job' && <JobForm item={modal.payload} data={data} update={update} close={close} />}

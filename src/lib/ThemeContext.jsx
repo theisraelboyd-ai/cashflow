@@ -1,12 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { themes, loadSettings, saveSettings, resolveTheme } from './theme.js';
 import { buildStyles } from './styles.js';
+import { useIsDesktop } from '../hooks/useMediaQuery.js';
 
 const ThemeContext = createContext(null);
 
 export function ThemeProvider({ children }) {
   const [settings, setSettings] = useState(() => loadSettings());
   const [systemDark, setSystemDark] = useState(true);
+  const isDesktop = useIsDesktop();
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -24,7 +26,7 @@ export function ThemeProvider({ children }) {
   const themeName = resolveTheme(settings.theme);
   const t = themes[themeName];
   const textScale = settings.textScale || 1;
-  const styles = useMemo(() => buildStyles(t, textScale), [themeName, textScale]);
+  const styles = useMemo(() => buildStyles(t, textScale, isDesktop), [themeName, textScale, isDesktop]);
 
   useEffect(() => {
     document.body.style.background = t.bg;
@@ -47,6 +49,7 @@ export function ThemeProvider({ children }) {
     themeName,
     settings,
     textScale,
+    isDesktop,
     updateSettings,
     privacy: !!settings.privacy,
     togglePrivacy: () => updateSettings({ privacy: !settings.privacy }),
