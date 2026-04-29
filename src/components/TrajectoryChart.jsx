@@ -30,9 +30,10 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
   const padTop = 14;
   const padBottom = 22;
   const padX = 10;
+  const padLeft = 36;  // extra room for £k labels on the y-axis
 
   const xDay = (i) =>
-    padX + (i / Math.max(1, safeDayPoints.length - 1)) * (W - padX * 2);
+    padLeft + (i / Math.max(1, safeDayPoints.length - 1)) * (W - padLeft - padX);
 
   const totals = safeDayPoints.map((p) => p.total || 0);
   const maxBalance = totals.length ? Math.max(...totals, 100) : 100;
@@ -140,13 +141,44 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
   // just thin the LABELS.
   const labelStride = useMemo(() => {
     if (monthBoundaries.length === 0) return 1;
-    const avgGap = (W - padX * 2) / (monthBoundaries.length + 1);
+    const avgGap = (W - padLeft - padX) / (monthBoundaries.length + 1);
     if (avgGap < 22) return 3;       // 12m+ — every 3rd
     if (avgGap < 36) return 2;       // 6m — every other
     return 1;                         // 1m/3m — all
   }, [monthBoundaries.length]);
 
   const showFirstMonthLabel = monthBoundaries.length === 0 || monthBoundaries[0].idx > dayPoints.length * 0.14;
+
+  // Y-axis ticks - clean £k increments scaled to the visible range.
+  // Picks a "nice" step so we end up with ~4-5 labels.
+  const yTicks = useMemo(() => {
+    if (safeDayPoints.length === 0) return [];
+    const range = yMaxPadded - yMinPadded;
+    if (range <= 0) return [];
+    // Choose a "nice" step: 100, 250, 500, 1k, 2.5k, 5k, 10k, 25k, 50k, 100k
+    const niceSteps = [100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000];
+    const targetTicks = 4;
+    const rawStep = range / targetTicks;
+    const step = niceSteps.find((s) => s >= rawStep) || niceSteps[niceSteps.length - 1];
+    // Find first tick at-or-above yMinPadded, snapped to the step
+    const firstTick = Math.ceil(yMinPadded / step) * step;
+    const ticks = [];
+    for (let v = firstTick; v <= yMaxPadded; v += step) {
+      ticks.push(v);
+      if (ticks.length > 8) break;  // safety
+    }
+    return ticks;
+  }, [safeDayPoints.length, yMinPadded, yMaxPadded]);
+
+  // Format y-axis tick label - £k for thousands, plain for sub-1k
+  const fmtTick = (v) => {
+    if (Math.abs(v) >= 1000) {
+      const k = v / 1000;
+      // 1 decimal if it's not whole, otherwise integer
+      return `£${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
+    }
+    return `£${Math.round(v)}`;
+  };
 
   // Bills + income marker positions, with a hit-test list for snap-to-event
   const billDaysRaw = useMemo(() => {
@@ -192,7 +224,7 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
   // For long horizons, show only the largest-magnitude events.
   const totalDots = billDaysRaw.length + incomeDaysRaw.length;
   const minDotSpacing = 7;  // SVG units
-  const availableWidth = W - padX * 2;
+  const availableWidth = W - padLeft - padX;
   const maxComfortableDots = Math.floor(availableWidth / minDotSpacing);
 
   // If we have too many dots, sort by magnitude and keep the top N
@@ -245,7 +277,7 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
       return bestEventIdx;
     }
     // Otherwise, use the nearest day index
-    const i = Math.round(((svgX - padX) / (W - padX * 2)) * (dayPoints.length - 1));
+    const i = Math.round(((svgX - padLeft) / (W - padLeft - padX)) * (dayPoints.length - 1));
     return Math.max(0, Math.min(dayPoints.length - 1, i));
   };
 
@@ -407,6 +439,37 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
           </linearGradient>
         </defs>
 
+        {/* Y-axis grid lines and £k labels */}
+        {yTicks.map((v, i) => {
+          const yPos = y(v);
+          if (yPos < padTop - 2 || yPos > H - padBottom + 2) return null;
+          return (
+            <g key={`y-${i}`}>
+              <line
+                x1={padLeft}
+                x2={W - padX}
+                y1={yPos}
+                y2={yPos}
+                stroke={t.border}
+                strokeWidth="1"
+                opacity="0.35"
+                strokeDasharray={v === 0 ? '0' : '2 4'}
+              />
+              <text
+                x={padLeft - 4}
+                y={yPos + 3}
+                fontSize="9"
+                fill={t.textFaint}
+                fontWeight="600"
+                textAnchor="end"
+                letterSpacing="0.3"
+              >
+                {fmtTick(v)}
+              </text>
+            </g>
+          );
+        })}
+
         {monthBoundaries.map((b, i) => {
           const showLabel = i % labelStride === 0;
           return (
@@ -438,7 +501,7 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
 
         {showFirstMonthLabel && (
           <text
-            x={padX + 2}
+            x={padLeft + 2}
             y={H - padBottom + 13}
             fontSize="9"
             fill={t.textFaint}
@@ -463,21 +526,6 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
         )}
 
         <path d={fillPath} fill="url(#gradPos)" />
-
-        {/* Per-account overlay lines (drawn first so they sit underneath the total) */}
-        {perAccountPaths.map((acc) => (
-          <path
-            key={`acc-${acc.id}`}
-            d={acc.path}
-            fill="none"
-            stroke={acc.color}
-            strokeWidth="1.4"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            strokeDasharray="3 3"
-            opacity="0.7"
-          />
-        ))}
 
         {/* Always coloured segments based on direction */}
         {lineSegments.map((seg, i) => {

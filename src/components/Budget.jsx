@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { AlertTriangle, ChevronLeft, ChevronRight, Eye, EyeOff, Home } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, monthLabel, monthLongLabel, startOfMonth, endOfMonth, addMonths, dayLabel, dateKey } from '../lib/format.js';
@@ -56,23 +56,6 @@ export function Budget({ data, setModal }) {
       ),
     };
   }, [viewData, budgetView]);
-
-  // Visible account toggles for the chart - default all accounts visible
-  const [visibleAccountIds, setVisibleAccountIds] = useState(null);  // null = all visible
-
-  // Reset visible accounts when accounts list changes (e.g. switching budgetView)
-  useEffect(() => {
-    setVisibleAccountIds(new Set(budgetData.accounts.map((a) => a.id)));
-  }, [budgetData.accounts]);
-
-  const toggleAccountVisible = (accountId) => {
-    setVisibleAccountIds((prev) => {
-      const next = new Set(prev || budgetData.accounts.map((a) => a.id));
-      if (next.has(accountId)) next.delete(accountId);
-      else next.add(accountId);
-      return next;
-    });
-  };
 
   // Show Personal/Joint toggle only if there's both kinds of account in the data.
   const hasMixedAccounts = useMemo(() => {
@@ -215,17 +198,6 @@ export function Budget({ data, setModal }) {
         }
       />
 
-      {/* Personal vs Joint view toggle - only shows if there's at least one household and one personal account */}
-      {hasMixedAccounts && (
-        <div style={styles.toggleRow}>
-          <Toggle active={budgetView === 'personal'} onClick={() => setBudgetView('personal')}>Personal</Toggle>
-          <Toggle active={budgetView === 'joint'} onClick={() => setBudgetView('joint')}>
-            <Home size={11} style={{ marginRight: 4, verticalAlign: -1 }} />
-            Joint
-          </Toggle>
-        </div>
-      )}
-
       <div style={styles.toggleRow}>
         <Toggle active={mode === 'realistic'} onClick={() => setMode('realistic')}>Realistic</Toggle>
         <Toggle active={mode === 'optimistic'} onClick={() => setMode('optimistic')}>All planned</Toggle>
@@ -297,67 +269,33 @@ export function Budget({ data, setModal }) {
         )}
       </div>
 
-      {/* Per-account toggles for the chart - only show if 2+ accounts in budget view */}
-      {budgetData.accounts.length > 1 && (
+      {/* Personal vs Joint context toggle - sits right above the chart it scopes */}
+      {hasMixedAccounts && (
         <div
           style={{
             display: 'flex',
-            flexWrap: 'wrap',
             gap: 6,
-            marginTop: 14,
-            marginBottom: -2,
-            paddingLeft: 4,
+            marginTop: 18,
+            marginBottom: 8,
+            alignItems: 'center',
           }}
         >
-          <span style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, alignSelf: 'center', marginRight: 4 }}>
-            Show:
+          <span style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginRight: 4 }}>
+            View:
           </span>
-          {budgetData.accounts.map((acc) => {
-            const isVisible = !visibleAccountIds || visibleAccountIds.has(acc.id);
-            const accColor = t.accountColors[acc.colorIdx ?? 0] || t.accent;
-            return (
-              <button
-                key={acc.id}
-                onClick={() => toggleAccountVisible(acc.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '5px 10px',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  background: isVisible ? t.bgElev : 'transparent',
-                  color: isVisible ? t.text : t.textFaint,
-                  border: `1px solid ${isVisible ? accColor : t.border}`,
-                  borderRadius: 999,
-                  cursor: 'pointer',
-                  opacity: isVisible ? 1 : 0.55,
-                  transition: 'opacity 0.15s, background 0.15s',
-                }}
-              >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    background: accColor,
-                    opacity: isVisible ? 1 : 0.4,
-                  }}
-                />
-                {acc.name}
-              </button>
-            );
-          })}
+          <Toggle active={budgetView === 'personal'} onClick={() => setBudgetView('personal')} small>Personal</Toggle>
+          <Toggle active={budgetView === 'joint'} onClick={() => setBudgetView('joint')} small>
+            <Home size={10} style={{ marginRight: 3, verticalAlign: -1 }} />
+            Joint
+          </Toggle>
         </div>
       )}
 
-      <div style={{ marginTop: 18 }}>
+      <div style={{ marginTop: hasMixedAccounts ? 4 : 18 }}>
         <TrajectoryChart
           dayPoints={dayPoints}
           events={events}
           onTapEvent={onTapEvent}
-          accounts={budgetData.accounts}
-          visibleAccountIds={visibleAccountIds}
         />
       </div>
 

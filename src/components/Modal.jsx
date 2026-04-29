@@ -164,10 +164,18 @@ function AccountForm({ item, data, update, close }) {
     update((d) => {
       if (item) {
         const target = d.accounts.find((a) => a.id === item.id);
+        const balanceChanged = Math.abs(Number(target.balance) - Number(balance)) > 0.001;
         target.name = name;
         target.balance = Number(balance);
         target.colorIdx = colorIdx;
         target.ownerId = ownerId;
+        // If the user changed the balance, treat this as a reconciliation:
+        // bump lastUpdated to now so the variance/expected calculation resets.
+        // Otherwise the "expected" line on Home becomes nonsense - it'd add
+        // stale events to the new balance.
+        if (balanceChanged) {
+          target.lastUpdated = new Date().toISOString();
+        }
       } else {
         d.accounts.push({
           id: uid(),
