@@ -97,6 +97,11 @@ input[type="date"]::-webkit-datetime-edit-fields-wrapper {
   to { transform: translateY(0); }
 }
 
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
 .serif {
   font-family: 'Cormorant Garamond', serif;
 }

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Trash2, AlertCircle, Download, Upload, Sun, Moon, Smartphone, Eye, EyeOff, Contrast, Type } from 'lucide-react';
+import { Trash2, AlertCircle, Download, Upload, Sun, Moon, Smartphone, Eye, EyeOff, Contrast, Type, Home as HomeIcon } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, uid, dayLabel, calendarDaysBetween, addDays } from '../lib/format.js';
 import { generateEvents } from '../lib/projection.js';
@@ -772,8 +772,26 @@ function BillForm({ item, data, update, close }) {
           {data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
         {ownerLabel && (
-          <div style={{ fontSize: 11, color: t.textFaint, marginTop: 6, fontStyle: 'italic' }}>
-            {ownerLabel} (derived from account)
+          <div
+            style={{
+              marginTop: 8,
+              padding: '8px 12px',
+              borderRadius: 8,
+              background: ownerLabel === 'Household bill' ? t.secondarySoft : t.accentSoft,
+              border: `1px solid ${ownerLabel === 'Household bill' ? t.secondary + '55' : t.accent + '55'}`,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 12,
+              color: ownerLabel === 'Household bill' ? t.secondary : t.accent,
+              fontWeight: 600,
+            }}
+          >
+            {ownerLabel === 'Household bill' && <HomeIcon size={13} />}
+            {ownerLabel}
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: t.textFaint, fontWeight: 500, fontStyle: 'italic' }}>
+              change account to reassign
+            </span>
           </div>
         )}
       </Field>

@@ -440,7 +440,7 @@ function BillSection({ title, monthlyTotal, bills, setModal, data, isHousehold }
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {bills.map((b) => <BillCard key={b.id} bill={b} setModal={setModal} data={data} />)}
+        {bills.map((b) => <BillCard key={b.id} bill={b} setModal={setModal} data={data} hideOwnerIcon={isHousehold} />)}
       </div>
     </div>
   );
@@ -480,10 +480,11 @@ function MovementsContent({ data, viewData, setModal }) {
   );
 }
 
-function BillCard({ bill, setModal, data }) {
+function BillCard({ bill, setModal, data, hideOwnerIcon }) {
   const { styles, t, privacy } = useTheme();
   const acc = data.accounts.find((a) => a.id === bill.accountId);
   const isHouseholdBill = !acc || acc.ownerId === 'household' || !acc.ownerId;
+  const showIcon = isHouseholdBill && !hideOwnerIcon;
   const dateLabel = bill.frequency === 'oneoff' ? dayLabel(bill.date)
     : bill.frequency === 'monthly' ? `day ${bill.dayOfMonth || 1}`
     : bill.frequency === 'yearly' ? dayLabel(bill.date)
@@ -492,7 +493,7 @@ function BillCard({ bill, setModal, data }) {
   return (
     <div style={styles.billCard} onClick={() => setModal({ type: 'bill', payload: bill })}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-        {isHouseholdBill && (
+        {showIcon && (
           <Home size={13} style={{ color: t.secondary, flexShrink: 0 }} title="Household bill" />
         )}
         <div style={{ minWidth: 0, flex: 1 }}>

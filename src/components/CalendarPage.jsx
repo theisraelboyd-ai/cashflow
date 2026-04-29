@@ -9,7 +9,7 @@ import { PageHeader, Money, ViewingAsSwitch } from './atoms.jsx';
 const DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
 export function CalendarPage({ data, setModal }) {
-  const { styles, t, privacy, togglePrivacy, viewingAs } = useTheme();
+  const { styles, t, privacy, togglePrivacy, viewingAs, isDesktop } = useTheme();
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   const [selectedDay, setSelectedDay] = useState(() => {
     const d = new Date();
@@ -91,22 +91,8 @@ export function CalendarPage({ data, setModal }) {
     });
   }, [selectedDay, viewData.jobs]);
 
-  return (
-    <div style={styles.page}>
-      <PageHeader
-        title={monthLongLabel(cursor)}
-        eyebrow="Calendar"
-        right={
-          <>
-            <ViewingAsSwitch earners={data.earners} />
-            <button style={styles.iconBtn} onClick={togglePrivacy} title="Toggle privacy">
-              {privacy ? <EyeOff size={16} /> : <Eye size={16} />}
-            </button>
-          </>
-        }
-        action={null}
-      />
-
+  const calendarBody = (
+    <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <button onClick={() => setCursor(addMonths(cursor, -1))} style={styles.iconBtn}>
           <ChevronLeft size={16} />
@@ -153,16 +139,64 @@ export function CalendarPage({ data, setModal }) {
         <LegendKey color={t.expense} label="bill" />
         <LegendKey color={t.secondary} label="transfer" />
       </div>
+    </>
+  );
 
-      {selectedDay && (
-        <DayDetail
-          day={selectedDay}
-          events={selectedEvents}
-          isWorking={selectedIsWorking}
-          workingJobs={selectedWorkingJobs}
-          accounts={data.accounts}
-          setModal={setModal}
-        />
+  const dayDetail = selectedDay ? (
+    <DayDetail
+      day={selectedDay}
+      events={selectedEvents}
+      isWorking={selectedIsWorking}
+      workingJobs={selectedWorkingJobs}
+      accounts={data.accounts}
+      setModal={setModal}
+      isDesktop={isDesktop}
+    />
+  ) : null;
+
+  return (
+    <div style={styles.page}>
+      <PageHeader
+        title={monthLongLabel(cursor)}
+        eyebrow="Calendar"
+        right={
+          <>
+            <ViewingAsSwitch earners={data.earners} />
+            <button style={styles.iconBtn} onClick={togglePrivacy} title="Toggle privacy">
+              {privacy ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </>
+        }
+        action={null}
+      />
+
+      {isDesktop ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: 24, alignItems: 'start' }}>
+          <div style={{ minWidth: 0 }}>{calendarBody}</div>
+          <div style={{ position: 'sticky', top: 32, maxHeight: 'calc(100vh - 64px)', overflowY: 'auto' }}>
+            {dayDetail || (
+              <div
+                style={{
+                  padding: 24,
+                  background: t.bgElev,
+                  border: `1px solid ${t.border}`,
+                  borderRadius: 12,
+                  textAlign: 'center',
+                  color: t.textFaint,
+                  fontSize: 13,
+                  fontStyle: 'italic',
+                }}
+              >
+                Click a day to see its detail
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          {calendarBody}
+          {dayDetail}
+        </>
       )}
     </div>
   );
@@ -371,7 +405,7 @@ function consolidateTransfers(events) {
   return consolidated;
 }
 
-function DayDetail({ day, events, isWorking, workingJobs, accounts, setModal }) {
+function DayDetail({ day, events, isWorking, workingJobs, accounts, setModal, isDesktop }) {
   const { t, privacy } = useTheme();
 
   const total = events.reduce((s, e) => {
@@ -382,7 +416,7 @@ function DayDetail({ day, events, isWorking, workingJobs, accounts, setModal }) 
   return (
     <div
       style={{
-        marginTop: 18,
+        marginTop: isDesktop ? 0 : 18,
         padding: 16,
         background: t.bgElev,
         border: `1px solid ${t.border}`,
