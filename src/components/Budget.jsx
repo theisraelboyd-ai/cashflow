@@ -151,13 +151,20 @@ export function Budget({ data, setModal }) {
   const monthSummary = useMemo(() => {
     const months = [];
     if (!Array.isArray(dayPoints) || dayPoints.length === 0) return months;
+    const accountIds = new Set((budgetData.accounts || []).map((a) => a.id));
     for (let i = 0; i < horizon; i++) {
       try {
         const mStart = startOfMonth(addMonths(projStart, i));
         const mEnd = endOfMonth(addMonths(projStart, i));
         const monthEvents = (events || []).filter((ev) => ev?.date && ev.date >= mStart && ev.date <= mEnd);
-        const income = monthEvents.filter((e) => e.amount > 0 && e.type !== 'transfer-in').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-        const outgoings = monthEvents.filter((e) => e.amount < 0 && e.type !== 'transfer-out').reduce((s, e) => s + Math.abs(Number(e.amount) || 0), 0);
+        // Income: any positive event affecting one of our accounts (including transfers IN to one of ours)
+        const income = monthEvents
+          .filter((e) => e.amount > 0 && accountIds.has(e.accountId))
+          .reduce((s, e) => s + (Number(e.amount) || 0), 0);
+        // Outgoings: any negative event leaving one of our accounts (including transfers OUT)
+        const outgoings = monthEvents
+          .filter((e) => e.amount < 0 && accountIds.has(e.accountId))
+          .reduce((s, e) => s + Math.abs(Number(e.amount) || 0), 0);
         const startPoint = dayPoints.find((p) => p?.date && dateKey(p.date) === dateKey(mStart)) || dayPoints[0];
         const endPoint = [...dayPoints].reverse().find((p) => p?.date && p.date <= mEnd) || dayPoints[dayPoints.length - 1];
         months.push({
@@ -173,7 +180,7 @@ export function Budget({ data, setModal }) {
       }
     }
     return months;
-  }, [events, dayPoints, horizon, projStart]);
+  }, [events, dayPoints, horizon, projStart, budgetData.accounts]);
 
   // Window label for the title - "April 2026" or "Apr–Jun 2026"
   const windowLabel = useMemo(() => {
@@ -182,6 +189,31 @@ export function Budget({ data, setModal }) {
     const endLbl = monthLongLabel(endOfMonth(addMonths(projStart, horizon - 1)));
     return `${monthLabel(projStart)}–${monthLabel(endOfMonth(addMonths(projStart, horizon - 1)))}`;
   }, [projStart, horizon]);
+
+  // Cashflow breakdown over the whole horizon - what actually flows in/out of the
+  // accounts in this view. Helps clarify why the hero "drop" is what it is.
+  const flowBreakdown = useMemo(() => {
+    const accountIds = new Set((budgetData.accounts || []).map((a) => a.id));
+    let bills = 0;
+    let income = 0;
+    let transfersOut = 0;
+    let transfersIn = 0;
+    (events || []).forEach((ev) => {
+      if (!ev || !accountIds.has(ev.accountId)) return;
+      if (ev.type === 'bill') bills += Math.abs(Number(ev.amount) || 0);
+      else if (ev.type === 'job' || ev.type === 'salary' || ev.type === 'extincome') {
+        income += Number(ev.amount) || 0;
+      } else if (ev.type === 'transfer-out') transfersOut += Math.abs(Number(ev.amount) || 0);
+      else if (ev.type === 'transfer-in') transfersIn += Number(ev.amount) || 0;
+    });
+    return {
+      bills,
+      income,
+      transfersOut,
+      transfersIn,
+      hasFlow: bills > 0 || income > 0 || transfersOut > 0 || transfersIn > 0,
+    };
+  }, [events, budgetData.accounts]);
 
   return (
     <div style={styles.page}>
@@ -268,6 +300,58 @@ export function Budget({ data, setModal }) {
           </div>
         )}
       </div>
+
+      {/* Cashflow breakdown - what the projection actually adds/subtracts */}
+      {flowBreakdown.hasFlow && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: '12px 14px',
+            background: t.bgElev,
+            border: `1px solid ${t.border}`,
+            borderRadius: 10,
+            fontSize: 12,
+          }}
+        >
+          <div style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginBottom: 8 }}>
+            Cashflow over {horizon}m {hasMixedAccounts && `· ${budgetView}`}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '4px 10px', color: t.textDim }}>
+            {flowBreakdown.income > 0 && (
+              <>
+                <span>Income (jobs, salary, contributions)</span>
+                <span style={{ color: t.income, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+                  +{fmt(flowBreakdown.income)}
+                </span>
+              </>
+            )}
+            {flowBreakdown.bills > 0 && (
+              <>
+                <span>Bills</span>
+                <span style={{ color: t.expense, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+                  −{fmt(flowBreakdown.bills)}
+                </span>
+              </>
+            )}
+            {flowBreakdown.transfersOut > 0 && (
+              <>
+                <span>Transfers out (to other accounts)</span>
+                <span style={{ color: t.expense, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+                  −{fmt(flowBreakdown.transfersOut)}
+                </span>
+              </>
+            )}
+            {flowBreakdown.transfersIn > 0 && (
+              <>
+                <span>Transfers in (from other accounts)</span>
+                <span style={{ color: t.income, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+                  +{fmt(flowBreakdown.transfersIn)}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Personal vs Joint context toggle - sits right above the chart it scopes */}
       {hasMixedAccounts && (

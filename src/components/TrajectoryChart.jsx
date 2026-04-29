@@ -245,7 +245,7 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
 
   const isCompacted = totalDots > maxComfortableDots;
 
-  const hoveredPoint = hoverIdx !== null ? dayPoints[hoverIdx] : null;
+  const hoveredPoint = hoverIdx !== null ? (safeDayPoints[hoverIdx] || null) : null;
   const hoveredDayEvents = hoveredPoint ? eventsByDayKey.get(dateKey(hoveredPoint.date)) || [] : [];
 
   // The "active" point - either currently being scrubbed, or stickily locked
@@ -508,7 +508,7 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
             fontWeight="600"
             letterSpacing="0.5"
           >
-            {monthLabel(dayPoints[0].date)}
+            {safeDayPoints[0] && monthLabel(safeDayPoints[0].date)}
           </text>
         )}
 
@@ -531,8 +531,11 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
         {lineSegments.map((seg, i) => {
           const ptsPath = [];
           for (let j = seg.startIdx; j <= seg.endIdx; j++) {
-            ptsPath.push(`${j === seg.startIdx ? 'M' : 'L'} ${xDay(j)} ${y(safeDayPoints[j].total)}`);
+            const dp = safeDayPoints[j];
+            if (!dp) continue;
+            ptsPath.push(`${j === seg.startIdx ? 'M' : 'L'} ${xDay(j)} ${y(dp.total || 0)}`);
           }
+          if (ptsPath.length < 2) return null;
           return (
             <path
               key={`seg-${i}`}
@@ -570,11 +573,11 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
           />
         ))}
 
-        {firstNegativeIdx > 0 && (
+        {firstNegativeIdx > 0 && safeDayPoints[firstNegativeIdx] && (
           <g>
             <circle
               cx={xDay(firstNegativeIdx)}
-              cy={y(dayPoints[firstNegativeIdx].total)}
+              cy={y(safeDayPoints[firstNegativeIdx].total || 0)}
               r="4.5"
               fill={t.expense}
               stroke={t.bg}
@@ -583,7 +586,7 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
             {activeIdx === null && !privacy && (
               <text
                 x={xDay(firstNegativeIdx)}
-                y={y(dayPoints[firstNegativeIdx].total) - 8}
+                y={y(safeDayPoints[firstNegativeIdx].total || 0) - 8}
                 textAnchor="middle"
                 fontSize="9"
                 fill={t.expense}
@@ -635,7 +638,7 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
             />
             <circle
               cx={xDay(activeIdx)}
-              cy={y(dayPoints[activeIdx].total)}
+              cy={y(safeDayPoints[activeIdx].total)}
               r="5"
               fill={t.accent}
               stroke={t.bg}
@@ -657,7 +660,8 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
       >
         {activeIdx !== null ? (
           (() => {
-            const activePoint = dayPoints[activeIdx];
+            const activePoint = safeDayPoints[activeIdx];
+            if (!activePoint) return null;
             const activeEvents = eventsByDayKey.get(dateKey(activePoint.date)) || [];
             return (
               <div>
