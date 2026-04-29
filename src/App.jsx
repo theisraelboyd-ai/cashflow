@@ -29,7 +29,7 @@ function AppShell() {
         {page === 'home' && <Home data={data} setPage={setPage} setModal={setModal} />}
         {page === 'activity' && <Activity data={data} setModal={setModal} />}
         {page === 'calendar' && <CalendarPage data={data} setModal={setModal} />}
-        {page === 'budget' && <Budget data={data} />}
+        {page === 'budget' && <Budget data={data} setModal={setModal} />}
         {page === 'wealth' && <Wealth data={data} setModal={setModal} />}
         <Nav page={page} setPage={setPage} />
       </div>

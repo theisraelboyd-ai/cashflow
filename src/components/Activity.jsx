@@ -25,8 +25,11 @@ export function Activity({ data, setModal }) {
   const onAdd = () => {
     if (tab === 'work') {
       setModal({ type: 'workpicker', payload: null });
-    } else {
+    } else if (tab === 'bills') {
       setModal({ type: 'bill', payload: null });
+    } else {
+      // Movements tab - default to transfer add
+      setModal({ type: 'movementpicker', payload: null });
     }
   };
 
@@ -34,19 +37,20 @@ export function Activity({ data, setModal }) {
     <div style={styles.page}>
       <PageHeader
         title="Activity"
-        eyebrow="Work & Bills"
+        eyebrow="Work, bills, movements"
         right={<ViewingAsSwitch earners={data.earners} />}
         action={<AddButton onClick={onAdd} />}
       />
 
       <div style={styles.toggleRow}>
         <Toggle active={tab === 'work'} onClick={() => setTab('work')}>Work</Toggle>
-        <Toggle active={tab === 'bills'} onClick={() => setTab('bills')}>Bills & Transfers</Toggle>
+        <Toggle active={tab === 'bills'} onClick={() => setTab('bills')}>Bills</Toggle>
+        <Toggle active={tab === 'movements'} onClick={() => setTab('movements')}>Movements</Toggle>
       </div>
 
-      {tab === 'work'
-        ? <WorkContent data={data} viewData={viewData} setModal={setModal} />
-        : <BillsContent data={data} viewData={viewData} setModal={setModal} />}
+      {tab === 'work' && <WorkContent data={data} viewData={viewData} setModal={setModal} />}
+      {tab === 'bills' && <BillsContent data={data} viewData={viewData} setModal={setModal} />}
+      {tab === 'movements' && <MovementsContent data={data} viewData={viewData} setModal={setModal} />}
     </div>
   );
 }
@@ -337,32 +341,6 @@ function BillsContent({ data, viewData, setModal }) {
         <SummaryCell label="Annualised" value={fmt(totalAnnualised)} />
       </div>
 
-      <div style={{ marginTop: 22 }}>
-        <div style={styles.sectionHead}>
-          <h2 style={styles.h2}>Transfers</h2>
-          <button style={styles.iconBtn} onClick={() => setModal({ type: 'transfer', payload: null })}>
-            <Plus size={16} />
-          </button>
-        </div>
-        {data.transfers.length === 0 && <Empty msg="Movements between your own accounts" small />}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {data.transfers.map((tr) => <TransferCard key={tr.id} item={tr} setModal={setModal} data={data} />)}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 22 }}>
-        <div style={styles.sectionHead}>
-          <h2 style={styles.h2}>Other income</h2>
-          <button style={styles.iconBtn} onClick={() => setModal({ type: 'extincome', payload: null })}>
-            <Plus size={16} />
-          </button>
-        </div>
-        {viewData.externalIncome.length === 0 && <Empty msg="e.g. partner contributions" small />}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {viewData.externalIncome.map((e) => <ExtIncomeCard key={e.id} item={e} setModal={setModal} data={data} />)}
-        </div>
-      </div>
-
       {monthly.length === 0 && weekly.length === 0 && oneoff.length === 0 && yearly.length === 0 && (
         <div style={{ marginTop: 22 }}>
           <Empty msg="No bills yet. Tap + to add one." />
@@ -373,6 +351,40 @@ function BillsContent({ data, viewData, setModal }) {
       {weekly.length > 0 && <BillGroup title="Weekly" bills={weekly} setModal={setModal} data={data} />}
       {yearly.length > 0 && <BillGroup title="Yearly" bills={sortBills(yearly)} setModal={setModal} data={data} />}
       {oneoff.length > 0 && <BillGroup title="One-off" bills={sortBills(oneoff)} setModal={setModal} data={data} />}
+    </div>
+  );
+}
+
+function MovementsContent({ data, viewData, setModal }) {
+  const { styles, t } = useTheme();
+
+  return (
+    <div>
+      <div style={{ marginTop: 4 }}>
+        <div style={styles.sectionHead}>
+          <h2 style={styles.h2}>Transfers</h2>
+          <button style={styles.iconBtn} onClick={() => setModal({ type: 'transfer', payload: null })}>
+            <Plus size={16} />
+          </button>
+        </div>
+        {viewData.transfers.length === 0 && <Empty msg="Movements between your own accounts" small />}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {viewData.transfers.map((tr) => <TransferCard key={tr.id} item={tr} setModal={setModal} data={data} />)}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 22 }}>
+        <div style={styles.sectionHead}>
+          <h2 style={styles.h2}>Other income</h2>
+          <button style={styles.iconBtn} onClick={() => setModal({ type: 'extincome', payload: null })}>
+            <Plus size={16} />
+          </button>
+        </div>
+        {viewData.externalIncome.length === 0 && <Empty msg="e.g. partner contributions to joint" small />}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {viewData.externalIncome.map((e) => <ExtIncomeCard key={e.id} item={e} setModal={setModal} data={data} />)}
+        </div>
+      </div>
     </div>
   );
 }

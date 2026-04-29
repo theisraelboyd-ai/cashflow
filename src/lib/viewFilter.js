@@ -22,22 +22,33 @@ export function filterSalaries(salaries, viewingAs) {
   return salaries.filter((s) => s.earnerId === viewingAs);
 }
 
-export function filterExtIncome(items, viewingAs) {
+// External income: filter on DESTINATION account visibility, not earner.
+// Joanne paying into a Joint account is income I (Israel) need to see.
+export function filterExtIncome(items, viewingAs, accounts) {
   if (viewingAs === 'household') return items;
-  return items.filter((i) => i.earnerId === viewingAs);
+  const visibleAccountIds = new Set(filterAccounts(accounts, viewingAs).map((a) => a.id));
+  return items.filter((i) => visibleAccountIds.has(i.accountId));
+}
+
+// Transfers: visible if EITHER side of the transfer is to/from a visible account.
+export function filterTransfers(transfers, viewingAs, accounts) {
+  if (viewingAs === 'household') return transfers;
+  const visibleAccountIds = new Set(filterAccounts(accounts, viewingAs).map((a) => a.id));
+  return transfers.filter((tr) => visibleAccountIds.has(tr.fromAccountId) || visibleAccountIds.has(tr.toAccountId));
 }
 
 // Apply view filter to an entire data object - returns a new object with filtered arrays.
 export function applyViewFilter(data, viewingAs) {
   if (viewingAs === 'household') return data;
+  const accounts = filterAccounts(data.accounts || [], viewingAs);
   return {
     ...data,
-    accounts: filterAccounts(data.accounts || [], viewingAs),
+    accounts,
     bills: filterBills(data.bills || [], viewingAs),
     jobs: filterJobs(data.jobs || [], viewingAs),
     salaries: filterSalaries(data.salaries || [], viewingAs),
-    externalIncome: filterExtIncome(data.externalIncome || [], viewingAs),
-    // Transfers stay - they reference accounts which already filter themselves
+    externalIncome: filterExtIncome(data.externalIncome || [], viewingAs, data.accounts || []),
+    transfers: filterTransfers(data.transfers || [], viewingAs, data.accounts || []),
     // Assets stay household-level for now
   };
 }

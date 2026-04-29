@@ -15,10 +15,11 @@ export function Modal({ modal, setModal, data, update, setData }) {
       <div style={styles.modalSheet} onClick={(e) => e.stopPropagation()}>
         <div style={styles.modalHandle} />
         {modal.type === 'account' && <AccountForm item={modal.payload} data={data} update={update} close={close} />}
-        {modal.type === 'reconcile' && <ReconcileForm acc={modal.payload} data={data} update={update} close={close} />}
+        {modal.type === 'reconcile' && <ReconcileForm acc={modal.payload} data={data} update={update} close={close} setModal={setModal} />}
         {modal.type === 'job' && <JobForm item={modal.payload} data={data} update={update} close={close} />}
         {modal.type === 'salary' && <SalaryForm item={modal.payload} data={data} update={update} close={close} />}
         {modal.type === 'workpicker' && <WorkPickerForm setModal={setModal} close={close} />}
+        {modal.type === 'movementpicker' && <MovementPickerForm setModal={setModal} close={close} />}
         {modal.type === 'bill' && <BillForm item={modal.payload} data={data} update={update} close={close} />}
         {modal.type === 'extincome' && <ExtIncomeForm item={modal.payload} data={data} update={update} close={close} />}
         {modal.type === 'transfer' && <TransferForm item={modal.payload} data={data} update={update} close={close} />}
@@ -30,7 +31,7 @@ export function Modal({ modal, setModal, data, update, setData }) {
   );
 }
 
-function ReconcileForm({ acc, data, update, close }) {
+function ReconcileForm({ acc, data, update, close, setModal }) {
   const { styles, t } = useTheme();
   const [newBalance, setNewBalance] = useState(acc.balance);
 
@@ -122,6 +123,29 @@ function ReconcileForm({ acc, data, update, close }) {
         <button style={styles.btnGhost} onClick={close}>Cancel</button>
         <button style={styles.btnPrimary} onClick={submit}>Update</button>
       </div>
+
+      {setModal && (
+        <button
+          onClick={() => {
+            close();
+            setTimeout(() => setModal({ type: 'account', payload: acc }), 50);
+          }}
+          style={{
+            width: '100%',
+            marginTop: 14,
+            padding: '10px 14px',
+            background: 'transparent',
+            border: 'none',
+            color: t.textDim,
+            fontSize: 12,
+            cursor: 'pointer',
+            textTransform: 'uppercase',
+            letterSpacing: 1,
+          }}
+        >
+          Edit account details · rename · delete
+        </button>
+      )}
     </div>
   );
 }
@@ -487,6 +511,65 @@ function WorkPickerForm({ setModal, close }) {
       >
         <div style={{ color: t.text, fontWeight: 600, fontSize: 16 }}>Regular salary</div>
         <div style={{ color: t.textDim, fontSize: 12 }}>Annual gross paid monthly/weekly. Cumulative PAYE.</div>
+      </button>
+
+      <div style={styles.formActions}>
+        <button style={styles.btnGhost} onClick={close}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function MovementPickerForm({ setModal, close }) {
+  const { styles, t } = useTheme();
+
+  const choose = (type) => {
+    close();
+    setTimeout(() => setModal({ type, payload: null }), 50);
+  };
+
+  return (
+    <div>
+      <ModalHeader title="Add new movement" sub="Money flowing through your accounts" />
+
+      <button
+        onClick={() => choose('transfer')}
+        style={{
+          width: '100%',
+          padding: '18px 16px',
+          background: t.bgElev,
+          border: `1px solid ${t.border}`,
+          borderRadius: 12,
+          marginBottom: 10,
+          cursor: 'pointer',
+          textAlign: 'left',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        <div style={{ color: t.text, fontWeight: 600, fontSize: 16 }}>Transfer</div>
+        <div style={{ color: t.textDim, fontSize: 12 }}>Move money between your own accounts (standing order).</div>
+      </button>
+
+      <button
+        onClick={() => choose('extincome')}
+        style={{
+          width: '100%',
+          padding: '18px 16px',
+          background: t.bgElev,
+          border: `1px solid ${t.border}`,
+          borderRadius: 12,
+          marginBottom: 10,
+          cursor: 'pointer',
+          textAlign: 'left',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        <div style={{ color: t.text, fontWeight: 600, fontSize: 16 }}>Other income</div>
+        <div style={{ color: t.textDim, fontSize: 12 }}>External money in — e.g. partner's contribution to joint.</div>
       </button>
 
       <div style={styles.formActions}>

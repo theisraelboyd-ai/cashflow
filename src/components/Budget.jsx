@@ -7,12 +7,33 @@ import { applyViewFilter } from '../lib/viewFilter.js';
 import { PageHeader, Toggle, Money, ViewingAsSwitch } from './atoms.jsx';
 import { TrajectoryChart } from './TrajectoryChart.jsx';
 
-export function Budget({ data }) {
+export function Budget({ data, setModal }) {
   const { styles, t, privacy, viewingAs } = useTheme();
   const [horizon, setHorizon] = useState(3);
   const [mode, setMode] = useState('realistic');
 
   const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
+
+  // Map an event from chart back to its underlying record so we can open it in modal
+  const onTapEvent = (ev) => {
+    if (!setModal) return;
+    if (ev.type === 'bill' && ev.billId) {
+      const bill = data.bills.find((b) => b.id === ev.billId);
+      if (bill) setModal({ type: 'bill', payload: bill });
+    } else if (ev.type === 'job' && ev.jobId) {
+      const job = data.jobs.find((j) => j.id === ev.jobId);
+      if (job) setModal({ type: 'job', payload: job });
+    } else if (ev.type === 'salary' && ev.salaryId) {
+      const sal = (data.salaries || []).find((s) => s.id === ev.salaryId);
+      if (sal) setModal({ type: 'salary', payload: sal });
+    } else if (ev.type === 'extincome' && ev.extincomeId) {
+      const item = data.externalIncome.find((e) => e.id === ev.extincomeId);
+      if (item) setModal({ type: 'extincome', payload: item });
+    } else if ((ev.type === 'transfer-out' || ev.type === 'transfer-in') && ev.transferId) {
+      const tr = data.transfers.find((t) => t.id === ev.transferId);
+      if (tr) setModal({ type: 'transfer', payload: tr });
+    }
+  };
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -109,7 +130,7 @@ export function Budget({ data }) {
       </div>
 
       <div style={{ marginTop: 18 }}>
-        <TrajectoryChart dayPoints={dayPoints} events={events} />
+        <TrajectoryChart dayPoints={dayPoints} events={events} onTapEvent={onTapEvent} />
       </div>
 
       <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 12 }}>

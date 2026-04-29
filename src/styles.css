@@ -32,6 +32,20 @@ input, select, textarea {
   appearance: none;
 }
 
+/* Date inputs need native appearance so iOS shows the system date picker.
+   Without this, tapping a date field on iOS just shows a text cursor. */
+input[type="date"] {
+  -webkit-appearance: auto;
+  appearance: auto;
+  min-height: 42px;
+}
+
+/* iOS-specific: ensure date input shows placeholder area when empty */
+input[type="date"]::-webkit-date-and-time-value {
+  text-align: left;
+  font-family: inherit;
+}
+
 input:focus, select:focus, textarea:focus {
   outline: none;
 }
@@ -39,6 +53,32 @@ input:focus, select:focus, textarea:focus {
 ::-webkit-scrollbar {
   width: 0;
   height: 0;
+}
+
+/* Date inputs - make the native picker icon prominent, ensure the whole field is clickable */
+input[type="date"] {
+  position: relative;
+  cursor: pointer;
+  min-height: 44px;
+  background-image: none !important;
+}
+input[type="date"]::-webkit-calendar-picker-indicator {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  opacity: 0.6;
+  filter: invert(0.5);
+}
+input[type="date"]::-webkit-datetime-edit {
+  padding: 0;
+  font-family: inherit;
+}
+input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+  font-family: inherit;
 }
 
 .private-blur {

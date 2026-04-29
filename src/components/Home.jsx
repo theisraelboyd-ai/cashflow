@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Plus, AlertTriangle, Briefcase, Receipt, TrendingUp, Coins, Settings, Eye, EyeOff } from 'lucide-react';
+import { Plus, AlertTriangle, Briefcase, Receipt, TrendingUp, Coins, Settings, Eye, EyeOff, Pencil } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, greeting, dayLabel, addDays } from '../lib/format.js';
 import { generateEvents, projectBalances } from '../lib/projection.js';
@@ -144,22 +144,46 @@ function AccountRow({ acc, setModal, data }) {
 
   return (
     <div style={styles.accountRow} onClick={() => setModal({ type: 'reconcile', payload: acc })}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
         <div style={{ ...styles.accountDot, background: accountColor }} />
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 500, fontSize: 15, color: t.text }}>{acc.name}</div>
           <div style={styles.accountMeta}>
             {daysSince === 0 ? 'updated today' : `${daysSince}d ago`}
           </div>
         </div>
       </div>
-      <div style={{ textAlign: 'right' }}>
-        <div className={privacy ? 'private-blur' : ''} style={styles.accountBal}>{fmt(acc.balance)}</div>
-        {showVariance && (
-          <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }} className={privacy ? 'private-blur' : ''}>
-            expected {fmt(expected)}
-          </div>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ textAlign: 'right' }}>
+          <div className={privacy ? 'private-blur' : ''} style={styles.accountBal}>{fmt(acc.balance)}</div>
+          {showVariance && (
+            <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }} className={privacy ? 'private-blur' : ''}>
+              expected {fmt(expected)}
+            </div>
+          )}
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setModal({ type: 'account', payload: acc });
+          }}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 14,
+            border: 'none',
+            background: 'transparent',
+            color: t.textFaint,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+          title="Edit account"
+        >
+          <Pencil size={13} />
+        </button>
       </div>
     </div>
   );

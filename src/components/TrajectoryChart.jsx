@@ -2,11 +2,10 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, fmtShort, dayLabel, dateKey, monthLabel } from '../lib/format.js';
 
-const FLOOR = -3000;
-
-export function TrajectoryChart({ dayPoints, events }) {
+export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
   const { t, privacy } = useTheme();
   const [hoverIdx, setHoverIdx] = useState(null);
+  const [stickyIdx, setStickyIdx] = useState(null);
   const svgRef = useRef(null);
 
   const eventsByDayKey = useMemo(() => {
@@ -34,16 +33,16 @@ export function TrajectoryChart({ dayPoints, events }) {
   const maxBalance = Math.max(...totals, 100);
   const minBalance = Math.min(...totals, 0);
 
-  let yMin = Math.min(minBalance, 0);
+  // No artificial floor - let chart show the real magnitude. Auto-scale.
+  let yMin = minBalance;
   let yMax = maxBalance;
   if (yMax - yMin < 100) yMax = yMin + 100;
-  const yMinPadded = yMin - (yMax - yMin) * 0.05;
+  const yMinPadded = yMin - (yMax - yMin) * 0.08;
   const yMaxPadded = yMax + (yMax - yMin) * 0.08;
   const yRange = Math.max(1, yMaxPadded - yMinPadded);
 
   const y = (v) => {
-    const capped = Math.max(v, FLOOR);
-    return padTop + (1 - (capped - yMinPadded) / yRange) * (H - padTop - padBottom);
+    return padTop + (1 - (v - yMinPadded) / yRange) * (H - padTop - padBottom);
   };
 
   const yZero = y(0);
@@ -55,7 +54,15 @@ export function TrajectoryChart({ dayPoints, events }) {
 
   const firstNegativeIdx = dayPoints.findIndex((p) => p.total < 0);
 
-  // Month boundaries with collision avoidance for the leading-month label
+  // Find lowest point for callout
+  let lowestIdx = 0;
+  for (let i = 1; i < dayPoints.length; i++) {
+    if (dayPoints[i].total < dayPoints[lowestIdx].total) lowestIdx = i;
+  }
+  const lowestPoint = dayPoints[lowestIdx];
+  const showLowest = lowestPoint.total < 0;
+
+  // Month boundaries with auto-thinning based on width-per-month
   const monthBoundaries = useMemo(() => {
     const boundaries = [];
     let lastMonth = null;
@@ -69,9 +76,18 @@ export function TrajectoryChart({ dayPoints, events }) {
     return boundaries;
   }, [dayPoints]);
 
-  // Suppress the left-edge "first month" label if a month boundary falls within
-  // the first 12% of the chart width (would collide visually).
-  const showFirstMonthLabel = monthBoundaries.length === 0 || monthBoundaries[0].idx > dayPoints.length * 0.12;
+  // Auto-thin labels based on horizontal density. Need at least ~32px per label
+  // in the SVG viewBox to avoid overlap. Always show the line dividers though,
+  // just thin the LABELS.
+  const labelStride = useMemo(() => {
+    if (monthBoundaries.length === 0) return 1;
+    const avgGap = (W - padX * 2) / (monthBoundaries.length + 1);
+    if (avgGap < 22) return 3;       // 12m+ — every 3rd
+    if (avgGap < 36) return 2;       // 6m — every other
+    return 1;                         // 1m/3m — all
+  }, [monthBoundaries.length]);
+
+  const showFirstMonthLabel = monthBoundaries.length === 0 || monthBoundaries[0].idx > dayPoints.length * 0.14;
 
   // Bills + income marker positions, with a hit-test list for snap-to-event
   const billDays = useMemo(() => {
@@ -115,6 +131,9 @@ export function TrajectoryChart({ dayPoints, events }) {
   const hoveredPoint = hoverIdx !== null ? dayPoints[hoverIdx] : null;
   const hoveredDayEvents = hoveredPoint ? eventsByDayKey.get(dateKey(hoveredPoint.date)) || [] : [];
 
+  // The "active" point - either currently being scrubbed, or stickily locked
+  // const activeIdx already declared below
+
   // Convert client X to chart-space X (in viewBox units)
   const clientXToSvgX = (clientX) => {
     if (!svgRef.current) return 0;
@@ -151,45 +170,80 @@ export function TrajectoryChart({ dayPoints, events }) {
     setHoverIdx(i);
   };
 
-  // Touch and mouse handling separated. Touch events get full priority on
-  // mobile (Pointer Events on iOS Safari are unreliable inside SVG).
+  // The visible index: prefer transient hover (during drag/scrub),
+  // otherwise the sticky locked index.
+  const activeIdx = hoverIdx !== null ? hoverIdx : stickyIdx;
+
+  // Touch and mouse handling. Touch events get full priority on mobile
+  // (Pointer Events on iOS Safari are unreliable inside SVG).
+  // Releasing a touch/mouse drag now PERSISTS the selection (sticky mode).
+  // Tap outside the chart container clears it.
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
 
     let isTouching = false;
+    let didMove = false;
 
     const onTouchStart = (e) => {
       e.preventDefault();
       isTouching = true;
+      didMove = false;
       const touch = e.touches[0];
       if (touch) setIdxFromClientX(touch.clientX);
     };
     const onTouchMove = (e) => {
       if (!isTouching) return;
       e.preventDefault();
+      didMove = true;
       const touch = e.touches[0];
       if (touch) setIdxFromClientX(touch.clientX);
     };
     const onTouchEnd = () => {
       isTouching = false;
+      // Lock current hover position as sticky, then clear hover
+      if (hoverIdx !== null) {
+        setStickyIdx(hoverIdx);
+      }
       setHoverIdx(null);
     };
 
-    const onMouseMove = (e) => {
+    const onMouseDown = (e) => {
       if (isTouching) return;
       setIdxFromClientX(e.clientX);
     };
+    const onMouseMove = (e) => {
+      if (isTouching) return;
+      // Only scrub on drag (button held down)
+      if (e.buttons > 0) {
+        setIdxFromClientX(e.clientX);
+      }
+    };
+    const onMouseUp = (e) => {
+      if (isTouching) return;
+      if (hoverIdx !== null) {
+        setStickyIdx(hoverIdx);
+      }
+      setHoverIdx(null);
+    };
     const onMouseLeave = () => {
       if (isTouching) return;
+      // Don't clear sticky on mouse leave - let it persist
       setHoverIdx(null);
+    };
+    const onClick = (e) => {
+      // Single click sets sticky directly
+      setIdxFromClientX(e.clientX);
+      setStickyIdx(findIdxFromX(clientXToSvgX(e.clientX)));
     };
 
     svg.addEventListener('touchstart', onTouchStart, { passive: false });
     svg.addEventListener('touchmove', onTouchMove, { passive: false });
     svg.addEventListener('touchend', onTouchEnd);
     svg.addEventListener('touchcancel', onTouchEnd);
+    svg.addEventListener('mousedown', onMouseDown);
     svg.addEventListener('mousemove', onMouseMove);
+    svg.addEventListener('mouseup', onMouseUp);
     svg.addEventListener('mouseleave', onMouseLeave);
 
     return () => {
@@ -197,10 +251,17 @@ export function TrajectoryChart({ dayPoints, events }) {
       svg.removeEventListener('touchmove', onTouchMove);
       svg.removeEventListener('touchend', onTouchEnd);
       svg.removeEventListener('touchcancel', onTouchEnd);
+      svg.removeEventListener('mousedown', onMouseDown);
       svg.removeEventListener('mousemove', onMouseMove);
+      svg.removeEventListener('mouseup', onMouseUp);
       svg.removeEventListener('mouseleave', onMouseLeave);
     };
-  }, [dayPoints.length, billDays.length, incomeDays.length]);
+  }, [dayPoints.length, billDays.length, incomeDays.length, hoverIdx]);
+
+  // Reset sticky when dayPoints change (new horizon, new data)
+  useEffect(() => {
+    setStickyIdx(null);
+  }, [dayPoints.length]);
 
   return (
     <div
@@ -241,29 +302,34 @@ export function TrajectoryChart({ dayPoints, events }) {
           </linearGradient>
         </defs>
 
-        {monthBoundaries.map((b, i) => (
-          <g key={i}>
-            <line
-              x1={xDay(b.idx)}
-              x2={xDay(b.idx)}
-              y1={padTop}
-              y2={H - padBottom}
-              stroke={t.border}
-              strokeWidth="1"
-              opacity="0.6"
-            />
-            <text
-              x={xDay(b.idx) + 3}
-              y={H - padBottom + 13}
-              fontSize="9"
-              fill={t.textFaint}
-              fontWeight="600"
-              letterSpacing="0.5"
-            >
-              {b.label}
-            </text>
-          </g>
-        ))}
+        {monthBoundaries.map((b, i) => {
+          const showLabel = i % labelStride === 0;
+          return (
+            <g key={i}>
+              <line
+                x1={xDay(b.idx)}
+                x2={xDay(b.idx)}
+                y1={padTop}
+                y2={H - padBottom}
+                stroke={t.border}
+                strokeWidth="1"
+                opacity={showLabel ? 0.6 : 0.3}
+              />
+              {showLabel && (
+                <text
+                  x={xDay(b.idx) + 3}
+                  y={H - padBottom + 13}
+                  fontSize="9"
+                  fill={t.textFaint}
+                  fontWeight="600"
+                  letterSpacing="0.5"
+                >
+                  {b.label}
+                </text>
+              )}
+            </g>
+          );
+        })}
 
         {showFirstMonthLabel && (
           <text
@@ -335,7 +401,7 @@ export function TrajectoryChart({ dayPoints, events }) {
               stroke={t.bg}
               strokeWidth="1.5"
             />
-            {hoverIdx === null && !privacy && (
+            {activeIdx === null && !privacy && (
               <text
                 x={xDay(firstNegativeIdx)}
                 y={y(dayPoints[firstNegativeIdx].total) - 8}
@@ -350,11 +416,38 @@ export function TrajectoryChart({ dayPoints, events }) {
           </g>
         )}
 
-        {hoverIdx !== null && (
+        {/* Lowest-point callout when chart goes deeper than zero */}
+        {showLowest && lowestIdx !== firstNegativeIdx && activeIdx === null && (
+          <g>
+            <circle
+              cx={xDay(lowestIdx)}
+              cy={y(lowestPoint.total)}
+              r="3.5"
+              fill={t.expense}
+              stroke={t.bg}
+              strokeWidth="1.2"
+              opacity="0.85"
+            />
+            {!privacy && (
+              <text
+                x={xDay(lowestIdx)}
+                y={y(lowestPoint.total) + 14}
+                textAnchor="middle"
+                fontSize="9"
+                fill={t.expense}
+                fontWeight="700"
+              >
+                low {fmtShort(lowestPoint.total)}
+              </text>
+            )}
+          </g>
+        )}
+
+        {activeIdx !== null && (
           <g>
             <line
-              x1={xDay(hoverIdx)}
-              x2={xDay(hoverIdx)}
+              x1={xDay(activeIdx)}
+              x2={xDay(activeIdx)}
               y1={padTop}
               y2={H - padBottom}
               stroke={t.accent}
@@ -362,8 +455,8 @@ export function TrajectoryChart({ dayPoints, events }) {
               opacity="0.7"
             />
             <circle
-              cx={xDay(hoverIdx)}
-              cy={y(dayPoints[hoverIdx].total)}
+              cx={xDay(activeIdx)}
+              cy={y(dayPoints[activeIdx].total)}
               r="5"
               fill={t.accent}
               stroke={t.bg}
@@ -378,63 +471,90 @@ export function TrajectoryChart({ dayPoints, events }) {
           marginTop: 10,
           minHeight: 56,
           padding: '10px 12px',
-          background: hoveredPoint ? t.bgInset : 'transparent',
+          background: activeIdx !== null ? t.bgInset : 'transparent',
           borderRadius: 8,
           transition: 'background 0.15s',
         }}
       >
-        {hoveredPoint ? (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-              <div style={{ fontSize: 11, color: t.textDim, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                {dayLabel(hoveredPoint.date)}
-              </div>
-              <div
-                style={{
-                  fontFamily: "'Cormorant Garamond', serif",
-                  fontSize: 18,
-                  fontWeight: t.weightAmount,
-                  color: hoveredPoint.total < 0 ? t.expense : t.text,
-                }}
-                className={privacy ? 'private-blur' : ''}
-              >
-                {fmt(hoveredPoint.total)}
-              </div>
-            </div>
-            {hoveredDayEvents.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
-                {hoveredDayEvents.slice(0, 4).map((ev, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: 11,
-                      color: t.textDim,
-                    }}
-                  >
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
-                      {ev.label}
-                    </span>
-                    <span
-                      className={privacy ? 'private-blur' : ''}
-                      style={{
-                        color: ev.amount > 0 ? t.income : t.expense,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {ev.amount > 0 ? '+' : '−'}{fmt(Math.abs(ev.amount))}
-                    </span>
+        {activeIdx !== null ? (
+          (() => {
+            const activePoint = dayPoints[activeIdx];
+            const activeEvents = eventsByDayKey.get(dateKey(activePoint.date)) || [];
+            return (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: t.textDim, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {dayLabel(activePoint.date)}
+                    {stickyIdx !== null && hoverIdx === null && (
+                      <button
+                        onClick={() => setStickyIdx(null)}
+                        style={{
+                          background: 'transparent',
+                          border: `1px solid ${t.border}`,
+                          borderRadius: 4,
+                          color: t.textFaint,
+                          fontSize: 9,
+                          padding: '2px 6px',
+                          cursor: 'pointer',
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.5,
+                        }}
+                      >
+                        clear
+                      </button>
+                    )}
                   </div>
-                ))}
-                {hoveredDayEvents.length > 4 && (
-                  <div style={{ fontSize: 10, color: t.textFaint, fontStyle: 'italic' }}>
-                    + {hoveredDayEvents.length - 4} more
+                  <div
+                    style={{
+                      fontFamily: "'Cormorant Garamond', serif",
+                      fontSize: 18,
+                      fontWeight: t.weightAmount,
+                      color: activePoint.total < 0 ? t.expense : t.text,
+                    }}
+                    className={privacy ? 'private-blur' : ''}
+                  >
+                    {fmt(activePoint.total)}
+                  </div>
+                </div>
+                {activeEvents.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
+                    {activeEvents.slice(0, 4).map((ev, i) => (
+                      <div
+                        key={i}
+                        onClick={onTapEvent ? () => onTapEvent(ev) : undefined}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          fontSize: 11,
+                          color: t.textDim,
+                          padding: '2px 0',
+                          cursor: onTapEvent ? 'pointer' : 'default',
+                        }}
+                      >
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
+                          {ev.label}
+                        </span>
+                        <span
+                          className={privacy ? 'private-blur' : ''}
+                          style={{
+                            color: ev.amount > 0 ? t.income : t.expense,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {ev.amount > 0 ? '+' : '−'}{fmt(Math.abs(ev.amount))}
+                        </span>
+                      </div>
+                    ))}
+                    {activeEvents.length > 4 && (
+                      <div style={{ fontSize: 10, color: t.textFaint, fontStyle: 'italic' }}>
+                        + {activeEvents.length - 4} more
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
+            );
+          })()
         ) : (
           <div style={{ fontSize: 11, color: t.textFaint, textAlign: 'center', paddingTop: 4 }}>
             tap or drag the chart to inspect any day
