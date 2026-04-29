@@ -20,9 +20,7 @@ export function Activity({ data, setModal }) {
 
   const onAdd = () => {
     if (tab === 'work') {
-      // Choose between job and salary
-      const choice = confirm('OK = freelance Job, Cancel = regular Salary');
-      setModal({ type: choice ? 'job' : 'salary', payload: null });
+      setModal({ type: 'workpicker', payload: null });
     } else {
       setModal({ type: 'bill', payload: null });
     }

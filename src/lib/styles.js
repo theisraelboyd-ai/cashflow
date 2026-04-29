@@ -1,5 +1,9 @@
-// Styles are theme-aware - call buildStyles(theme) to get the full set
-export function buildStyles(t) {
+// Styles are theme-aware and respect the text scale setting.
+// Pass the scale factor to scale every font-size proportionally.
+
+export function buildStyles(t, scale = 1) {
+  const sz = (n) => Math.round(n * scale);
+
   return {
     app: {
       minHeight: '100vh',
@@ -24,16 +28,17 @@ export function buildStyles(t) {
       marginBottom: 24,
     },
     headerEyebrow: {
-      fontSize: 11,
+      fontSize: sz(11),
       textTransform: 'uppercase',
       letterSpacing: 2,
       color: t.textDim,
       marginBottom: 4,
+      fontWeight: 500,
     },
     headerTitle: {
       fontFamily: "'Cormorant Garamond', serif",
-      fontSize: 36,
-      fontWeight: 500,
+      fontSize: sz(36),
+      fontWeight: t.weightHeading,
       margin: 0,
       letterSpacing: -0.5,
       color: t.text,
@@ -48,16 +53,17 @@ export function buildStyles(t) {
       overflow: 'hidden',
     },
     heroLabel: {
-      fontSize: 11,
+      fontSize: sz(11),
       textTransform: 'uppercase',
       letterSpacing: 1.5,
       color: t.textDim,
       marginBottom: 8,
+      fontWeight: 500,
     },
     heroAmount: {
       fontFamily: "'Cormorant Garamond', serif",
-      fontSize: 44,
-      fontWeight: 500,
+      fontSize: sz(44),
+      fontWeight: t.weightAmount,
       letterSpacing: -1,
       lineHeight: 1,
       color: t.text,
@@ -66,21 +72,22 @@ export function buildStyles(t) {
       display: 'flex',
       justifyContent: 'space-between',
       marginTop: 16,
-      fontSize: 12,
+      fontSize: sz(13),
       color: t.textDim,
+      fontWeight: 500,
     },
     warningBar: {
       marginTop: 14,
-      padding: '8px 12px',
+      padding: '10px 12px',
       background: t.expenseBg,
       border: `1px solid ${t.expense}`,
       borderRadius: 8,
       display: 'flex',
       alignItems: 'center',
       gap: 8,
-      fontSize: 12,
+      fontSize: sz(13),
       color: t.expense,
-      fontWeight: 500,
+      fontWeight: 600,
     },
     sectionHead: {
       display: 'flex',
@@ -91,8 +98,8 @@ export function buildStyles(t) {
     },
     h2: {
       fontFamily: "'Cormorant Garamond', serif",
-      fontSize: 20,
-      fontWeight: 500,
+      fontSize: sz(20),
+      fontWeight: t.weightHeading,
       margin: 0,
       color: t.text,
     },
@@ -136,14 +143,14 @@ export function buildStyles(t) {
       borderRadius: 4,
     },
     accountMeta: {
-      fontSize: 11,
+      fontSize: sz(11),
       color: t.textFaint,
       marginTop: 2,
     },
     accountBal: {
       fontFamily: "'Cormorant Garamond', serif",
-      fontSize: 20,
-      fontWeight: 500,
+      fontSize: sz(20),
+      fontWeight: t.weightAmount,
       color: t.text,
     },
     quickGrid: {
@@ -205,7 +212,7 @@ export function buildStyles(t) {
       padding: 14,
     },
     monthHeader: {
-      fontSize: 11,
+      fontSize: sz(11),
       textTransform: 'uppercase',
       letterSpacing: 1.5,
       color: t.textDim,
@@ -213,6 +220,7 @@ export function buildStyles(t) {
       marginBottom: 10,
       paddingBottom: 6,
       borderBottom: `1px solid ${t.border}`,
+      fontWeight: 600,
     },
     modalOverlay: {
       position: 'fixed',
@@ -255,7 +263,7 @@ export function buildStyles(t) {
       border: `1px solid ${t.border}`,
       borderRadius: 10,
       color: t.text,
-      fontSize: 15,
+      fontSize: sz(15),
       fontFamily: 'inherit',
       boxSizing: 'border-box',
     },
@@ -266,9 +274,9 @@ export function buildStyles(t) {
       border: 'none',
       borderBottom: `1px solid ${t.border}`,
       color: t.text,
-      fontSize: 36,
+      fontSize: sz(36),
       fontFamily: "'Cormorant Garamond', serif",
-      fontWeight: 500,
+      fontWeight: t.weightAmount,
       boxSizing: 'border-box',
       outline: 'none',
     },
@@ -287,7 +295,7 @@ export function buildStyles(t) {
       color: t.bg,
       border: 'none',
       borderRadius: 10,
-      fontSize: 14,
+      fontSize: sz(14),
       fontWeight: 600,
       textTransform: 'uppercase',
       letterSpacing: 1,
@@ -300,7 +308,7 @@ export function buildStyles(t) {
       color: t.textDim,
       border: `1px solid ${t.border}`,
       borderRadius: 10,
-      fontSize: 14,
+      fontSize: sz(14),
       fontWeight: 500,
       textTransform: 'uppercase',
       letterSpacing: 1,
@@ -345,5 +353,6 @@ export function buildStyles(t) {
       margin: '0 auto',
       zIndex: 50,
     },
+    sz,  // expose the scale function for components
   };
 }

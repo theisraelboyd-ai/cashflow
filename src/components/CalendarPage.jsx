@@ -3,7 +3,6 @@ import { ChevronLeft, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { startOfMonth, endOfMonth, addMonths, monthLongLabel, dateKey, sameDay, fmtShort, dayLabel, fmt } from '../lib/format.js';
 import { generateEvents } from '../lib/projection.js';
-import { jobPayDate } from '../lib/tax.js';
 import { PageHeader, Money } from './atoms.jsx';
 
 const DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -25,7 +24,7 @@ export function CalendarPage({ data, setModal }) {
     [data, cursor]
   );
 
-  // Working days from job spans
+  // Working days
   const workDays = useMemo(() => {
     const set = new Set();
     (data.jobs || []).forEach((job) => {
@@ -59,7 +58,6 @@ export function CalendarPage({ data, setModal }) {
     const offset = (firstDay.getDay() + 6) % 7;
     const gridStart = new Date(firstDay);
     gridStart.setDate(gridStart.getDate() - offset);
-
     const cells = [];
     const cur = new Date(gridStart);
     for (let i = 0; i < 42; i++) {
@@ -78,7 +76,6 @@ export function CalendarPage({ data, setModal }) {
   const selectedEvents = selectedDay ? (eventsByDay.get(dateKey(selectedDay)) || []) : [];
   const selectedIsWorking = selectedDay && workDays.has(dateKey(selectedDay));
 
-  // Get jobs whose span covers the selected day
   const selectedWorkingJobs = useMemo(() => {
     if (!selectedDay) return [];
     return (data.jobs || []).filter((j) => {
@@ -104,23 +101,15 @@ export function CalendarPage({ data, setModal }) {
         action={null}
       />
 
-      {/* Month nav + summary */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 16,
-        }}
-      >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <button onClick={() => setCursor(addMonths(cursor, -1))} style={styles.iconBtn}>
           <ChevronLeft size={16} />
         </button>
-        <div style={{ display: 'flex', gap: 14, fontSize: 12 }}>
-          <span style={{ color: t.income }} className={privacy ? 'private-blur' : ''}>
+        <div style={{ display: 'flex', gap: 14, fontSize: 13 }}>
+          <span style={{ color: t.income, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
             +{fmtShort(monthIncome)}
           </span>
-          <span style={{ color: t.expense }} className={privacy ? 'private-blur' : ''}>
+          <span style={{ color: t.expense, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
             −{fmtShort(monthOut)}
           </span>
         </div>
@@ -129,171 +118,36 @@ export function CalendarPage({ data, setModal }) {
         </button>
       </div>
 
-      {/* DOW header */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3, marginBottom: 6 }}>
         {DOW.map((d, i) => (
-          <div
-            key={i}
-            style={{
-              fontSize: 10,
-              color: t.textFaint,
-              textAlign: 'center',
-              padding: '4px 0',
-              letterSpacing: 0.5,
-            }}
-          >
+          <div key={i} style={{ fontSize: 10, color: t.textFaint, textAlign: 'center', padding: '4px 0', letterSpacing: 0.5, fontWeight: 600 }}>
             {d}
           </div>
         ))}
       </div>
 
-      {/* Day cells - taller now since we have a full page */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3 }}>
-        {grid.map((day, i) => {
-          const inMonth = day.getMonth() === cursor.getMonth();
-          const isToday = sameDay(day, today);
-          const isSelected = selectedDay && sameDay(day, selectedDay);
-          const k = dateKey(day);
-          const dayEvents = eventsByDay.get(k) || [];
-          const isWorking = workDays.has(k);
-
-          // Group events by type for compact display
-          const incomeCount = dayEvents.filter((e) => e.type === 'job' || e.type === 'salary' || e.type === 'extincome').length;
-          const billCount = dayEvents.filter((e) => e.type === 'bill').length;
-          const transferCount = dayEvents.filter((e) => e.type.startsWith('transfer')).length;
-
-          return (
-            <div
-              key={i}
-              onClick={() => setSelectedDay(day)}
-              style={{
-                aspectRatio: '0.85',
-                position: 'relative',
-                background: isSelected
-                  ? t.accentSoft
-                  : isWorking
-                  ? t.secondarySoft
-                  : isToday
-                  ? t.accentSoft
-                  : t.bgElev,
-                border: `1px solid ${
-                  isSelected ? t.accent : isToday ? t.accent : t.border
-                }`,
-                borderRadius: 8,
-                display: 'flex',
-                flexDirection: 'column',
-                padding: '4px 4px 3px',
-                cursor: 'pointer',
-                opacity: inMonth ? 1 : 0.35,
-                transition: 'background 0.15s',
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 12,
-                  color: isToday ? t.accent : t.text,
-                  fontWeight: isToday ? 600 : 400,
-                  lineHeight: 1,
-                  textAlign: 'center',
-                  marginBottom: 2,
-                }}
-              >
-                {day.getDate()}
-              </div>
-
-              {/* Working indicator: small bar at top */}
-              {isWorking && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 6,
-                    right: 6,
-                    height: 2,
-                    background: t.secondary,
-                    borderBottomLeftRadius: 2,
-                    borderBottomRightRadius: 2,
-                  }}
-                />
-              )}
-
-              {/* Event pills */}
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 2,
-                  marginTop: 'auto',
-                  alignItems: 'stretch',
-                }}
-              >
-                {incomeCount > 0 && (
-                  <div
-                    style={{
-                      height: 4,
-                      background: t.income,
-                      borderRadius: 2,
-                      opacity: 0.9,
-                    }}
-                  />
-                )}
-                {billCount > 0 && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: 1.5,
-                      height: 4,
-                    }}
-                  >
-                    {Array.from({ length: Math.min(billCount, 3) }).map((_, j) => (
-                      <div
-                        key={j}
-                        style={{
-                          flex: 1,
-                          background: t.expense,
-                          borderRadius: 2,
-                          opacity: 0.85,
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-                {transferCount > 0 && (
-                  <div
-                    style={{
-                      height: 3,
-                      background: t.textDim,
-                      borderRadius: 2,
-                      opacity: 0.6,
-                    }}
-                  />
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {grid.map((day, i) => (
+          <DayCell
+            key={i}
+            day={day}
+            inMonth={day.getMonth() === cursor.getMonth()}
+            isToday={sameDay(day, today)}
+            isSelected={selectedDay && sameDay(day, selectedDay)}
+            isWorking={workDays.has(dateKey(day))}
+            events={eventsByDay.get(dateKey(day)) || []}
+            onClick={() => setSelectedDay(day)}
+          />
+        ))}
       </div>
 
-      {/* Legend */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 14,
-          justifyContent: 'center',
-          marginTop: 14,
-          fontSize: 10,
-          color: t.textFaint,
-          letterSpacing: 0.5,
-        }}
-      >
+      <div style={{ display: 'flex', gap: 14, justifyContent: 'center', marginTop: 14, fontSize: 11, color: t.textFaint, letterSpacing: 0.5, fontWeight: 500 }}>
         <LegendKey color={t.secondary} label="working" tint />
         <LegendKey color={t.income} label="income" />
         <LegendKey color={t.expense} label="bill" />
         <LegendKey color={t.textDim} label="transfer" />
       </div>
 
-      {/* Day detail */}
       {selectedDay && (
         <DayDetail
           day={selectedDay}
@@ -303,6 +157,145 @@ export function CalendarPage({ data, setModal }) {
           setModal={setModal}
         />
       )}
+    </div>
+  );
+}
+
+// Big day cell with event pills
+function DayCell({ day, inMonth, isToday, isSelected, isWorking, events, onClick }) {
+  const { t, privacy } = useTheme();
+
+  // Sort events: income first, then bills, then transfers
+  const sortedEvents = useMemo(() => {
+    const order = { 'salary': 0, 'job': 0, 'extincome': 0, 'transfer-in': 1, 'bill': 2, 'transfer-out': 3 };
+    return [...events].sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
+  }, [events]);
+
+  const visiblePills = sortedEvents.slice(0, 2);
+  const overflowCount = Math.max(0, sortedEvents.length - 2);
+
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        aspectRatio: '0.7',
+        position: 'relative',
+        background: isSelected
+          ? t.accentSoft
+          : isWorking
+          ? t.secondarySoft
+          : isToday
+          ? t.accentSoft
+          : t.bgElev,
+        border: `1px solid ${isSelected ? t.accent : isToday ? t.accent : t.border}`,
+        borderRadius: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        padding: '4px 3px 3px',
+        cursor: 'pointer',
+        opacity: inMonth ? 1 : 0.35,
+        transition: 'background 0.15s',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 12,
+          color: isToday ? t.accent : t.text,
+          fontWeight: isToday ? 700 : 500,
+          lineHeight: 1,
+          textAlign: 'center',
+          marginBottom: 3,
+        }}
+      >
+        {day.getDate()}
+      </div>
+
+      {isWorking && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 6,
+            right: 6,
+            height: 3,
+            background: t.secondary,
+            borderBottomLeftRadius: 2,
+            borderBottomRightRadius: 2,
+          }}
+        />
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 'auto' }}>
+        {visiblePills.map((ev, i) => (
+          <EventPill key={i} ev={ev} privacy={privacy} t={t} />
+        ))}
+        {overflowCount > 0 && (
+          <div
+            style={{
+              fontSize: 9,
+              color: t.textFaint,
+              textAlign: 'center',
+              fontWeight: 600,
+              letterSpacing: 0.3,
+            }}
+          >
+            +{overflowCount}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EventPill({ ev, privacy, t }) {
+  const isIncome = ev.amount > 0 && ev.type !== 'transfer-in';
+  const isTransfer = ev.type === 'transfer-in' || ev.type === 'transfer-out';
+  const color = isIncome ? t.income : isTransfer ? t.textDim : t.expense;
+  const bg = isIncome ? t.incomeBg : isTransfer ? t.bgInset : t.expenseBg;
+
+  // Truncate label aggressively to fit
+  const label = (ev.label || '').slice(0, 10);
+  const amountShort = fmtShort(Math.abs(ev.amount)).replace('£', '£');
+
+  return (
+    <div
+      style={{
+        background: bg,
+        borderLeft: `2px solid ${color}`,
+        borderRadius: 2,
+        padding: '2px 3px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        minHeight: 18,
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 8,
+          color,
+          fontWeight: 600,
+          lineHeight: 1.1,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 8,
+          color,
+          fontWeight: 700,
+          lineHeight: 1,
+        }}
+        className={privacy ? 'private-blur' : ''}
+      >
+        {isIncome ? '+' : '−'}{amountShort}
+      </div>
     </div>
   );
 }
@@ -352,15 +345,16 @@ function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
         }}
       >
         <div>
-          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, fontWeight: 500, color: t.text }}>
+          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, fontWeight: t.weightHeading, color: t.text }}>
             {day.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
           </div>
           {events.length > 0 && (
             <div
               style={{
-                fontSize: 12,
+                fontSize: 13,
                 color: total >= 0 ? t.income : t.expense,
                 marginTop: 2,
+                fontWeight: 600,
               }}
               className={privacy ? 'private-blur' : ''}
             >
@@ -378,7 +372,7 @@ function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
 
       {workingJobs.length > 0 && (
         <div style={{ marginBottom: events.length > 0 ? 14 : 0 }}>
-          <div style={{ fontSize: 10, color: t.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: t.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, fontWeight: 600 }}>
             Working
           </div>
           {workingJobs.map((j) => (
@@ -393,6 +387,7 @@ function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
                 background: t.secondarySoft,
                 borderRadius: 6,
                 cursor: 'pointer',
+                fontWeight: 500,
               }}
             >
               {j.title || 'Untitled'}{' '}
@@ -406,7 +401,7 @@ function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
 
       {events.length > 0 && (
         <div>
-          <div style={{ fontSize: 10, color: t.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: t.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, fontWeight: 600 }}>
             Cash flow
           </div>
           {events.map((ev, i) => (
@@ -416,18 +411,18 @@ function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                padding: '8px 10px',
+                padding: '10px 12px',
                 marginBottom: 4,
                 background: ev.amount > 0 ? t.incomeBg : t.expenseBg,
                 borderRadius: 6,
               }}
             >
-              <span style={{ color: t.text, fontSize: 13 }}>{ev.label}</span>
+              <span style={{ color: t.text, fontSize: 14, fontWeight: 500 }}>{ev.label}</span>
               <Money
                 value={ev.amount}
                 sign={ev.amount > 0 ? '+' : '-'}
                 color={ev.amount > 0 ? t.income : t.expense}
-                size={15}
+                size={16}
               />
             </div>
           ))}

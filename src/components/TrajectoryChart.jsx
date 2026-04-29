@@ -1,84 +1,54 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTheme } from '../lib/ThemeContext.jsx';
-import { fmt, fmtShort, dayLabel, dateKey } from '../lib/format.js';
+import { fmt, fmtShort, dayLabel, dateKey, monthLabel, startOfMonth } from '../lib/format.js';
 
 const FLOOR = -3000;
 
-const MODES = [
-  { id: 'balance', label: 'Balance' },
-  { id: 'bills', label: 'Bills out' },
-  { id: 'income', label: 'Money in' },
-];
-
-// Group events by week for chunkier bars on multi-month views
-function aggregateByWeek(events) {
-  const map = new Map();
-  events.forEach((ev) => {
-    const d = new Date(ev.date);
-    // Bucket to Monday of that week
-    const dow = (d.getDay() + 6) % 7;
-    const weekStart = new Date(d);
-    weekStart.setDate(weekStart.getDate() - dow);
-    weekStart.setHours(0, 0, 0, 0);
-    const k = weekStart.toISOString().slice(0, 10);
-    if (!map.has(k)) map.set(k, { date: weekStart, in: 0, out: 0, items: [] });
-    const bucket = map.get(k);
-    if (ev.amount > 0 && ev.type !== 'transfer-in') {
-      bucket.in += ev.amount;
-      bucket.items.push(ev);
-    } else if (ev.amount < 0 && ev.type !== 'transfer-out') {
-      bucket.out += Math.abs(ev.amount);
-      bucket.items.push(ev);
-    }
-  });
-  return Array.from(map.values()).sort((a, b) => a.date - b.date);
-}
-
 export function TrajectoryChart({ dayPoints, events }) {
   const { t, privacy } = useTheme();
-  const [mode, setMode] = useState('balance');
   const [hoverIdx, setHoverIdx] = useState(null);
+  const svgRef = useRef(null);
 
-  const weekly = useMemo(() => aggregateByWeek(events), [events]);
+  // Map events to days for tooltip detail
+  const eventsByDayKey = useMemo(() => {
+    const map = new Map();
+    events.forEach((ev) => {
+      const k = dateKey(ev.date);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(ev);
+    });
+    return map;
+  }, [events]);
 
   if (!dayPoints || dayPoints.length === 0) return null;
 
-  const W = 320, H = 200, pad = 8, xPad = 10;
+  // SVG geometry
+  const W = 320;
+  const H = 200;
+  const padTop = 14;
+  const padBottom = 22;
+  const padX = 10;
 
   // X scale across days
-  const xDay = (i) => xPad + (i / Math.max(1, dayPoints.length - 1)) * (W - xPad * 2);
+  const xDay = (i) =>
+    padX + (i / Math.max(1, dayPoints.length - 1)) * (W - padX * 2);
 
-  // For weekly bars, map a date to x coordinate based on day index
-  const dateToX = (date) => {
-    const startMs = dayPoints[0].date.getTime();
-    const endMs = dayPoints[dayPoints.length - 1].date.getTime();
-    const t = (date.getTime() - startMs) / Math.max(1, endMs - startMs);
-    return xPad + t * (W - xPad * 2);
-  };
-
+  // Y scale on balance (with floor)
   const totals = dayPoints.map((p) => p.total);
   const maxBalance = Math.max(...totals, 100);
-  const minBalance = Math.min(...totals, 0, FLOOR);
+  const minBalance = Math.min(...totals, 0);
 
-  const maxOut = weekly.length ? Math.max(...weekly.map((w) => w.out)) : 100;
-  const maxIn = weekly.length ? Math.max(...weekly.map((w) => w.in)) : 100;
-
-  let yMin, yMax;
-  if (mode === 'balance') {
-    yMin = Math.min(minBalance, 0);
-    yMax = Math.max(maxBalance * 1.1, 100);
-  } else if (mode === 'bills') {
-    yMin = 0;
-    yMax = Math.max(maxOut * 1.1, 100);
-  } else {
-    yMin = 0;
-    yMax = Math.max(maxIn * 1.1, 100);
-  }
-  const yRange = Math.max(1, yMax - yMin);
+  // Provide some headroom and add floor when going negative
+  let yMin = Math.min(minBalance, 0);
+  let yMax = maxBalance;
+  if (yMax - yMin < 100) yMax = yMin + 100;
+  const yMinPadded = yMin - (yMax - yMin) * 0.05;
+  const yMaxPadded = yMax + (yMax - yMin) * 0.08;
+  const yRange = Math.max(1, yMaxPadded - yMinPadded);
 
   const y = (v) => {
     const capped = Math.max(v, FLOOR);
-    return pad + (1 - (capped - yMin) / yRange) * (H - pad * 2);
+    return padTop + (1 - (capped - yMinPadded) / yRange) * (H - padTop - padBottom);
   };
 
   const yZero = y(0);
@@ -90,21 +60,107 @@ export function TrajectoryChart({ dayPoints, events }) {
 
   const firstNegativeIdx = dayPoints.findIndex((p) => p.total < 0);
 
-  // Bar width: across visible weeks
-  const weekCount = Math.max(1, weekly.length);
-  const barW = Math.min(20, Math.max(8, (W - xPad * 2) / weekCount * 0.7));
+  // Month boundary lines for visual rhythm
+  const monthBoundaries = useMemo(() => {
+    const boundaries = [];
+    let lastMonth = null;
+    dayPoints.forEach((p, i) => {
+      const m = p.date.getMonth();
+      if (lastMonth !== null && m !== lastMonth) {
+        boundaries.push({ idx: i, label: monthLabel(p.date), date: p.date });
+      }
+      lastMonth = m;
+    });
+    return boundaries;
+  }, [dayPoints]);
 
-  const cycleMode = () => {
-    const idx = MODES.findIndex((m) => m.id === mode);
-    setMode(MODES[(idx + 1) % MODES.length].id);
+  // Bill markers - one dot per day with bill activity
+  const billDays = useMemo(() => {
+    const set = new Map();
+    events.forEach((ev) => {
+      if (ev.type !== 'bill' && ev.type !== 'transfer-out') return;
+      const k = dateKey(ev.date);
+      if (!set.has(k)) set.set(k, { date: ev.date, items: [], total: 0 });
+      const entry = set.get(k);
+      entry.items.push(ev);
+      entry.total += Math.abs(ev.amount);
+    });
+    // Map to indices
+    const result = [];
+    dayPoints.forEach((p, i) => {
+      const k = dateKey(p.date);
+      const entry = set.get(k);
+      if (entry) result.push({ idx: i, ...entry });
+    });
+    return result;
+  }, [events, dayPoints]);
+
+  // Income markers
+  const incomeDays = useMemo(() => {
+    const set = new Map();
+    events.forEach((ev) => {
+      if (ev.type !== 'job' && ev.type !== 'salary' && ev.type !== 'extincome' && ev.type !== 'transfer-in') return;
+      const k = dateKey(ev.date);
+      if (!set.has(k)) set.set(k, { date: ev.date, items: [], total: 0 });
+      const entry = set.get(k);
+      entry.items.push(ev);
+      entry.total += ev.amount;
+    });
+    const result = [];
+    dayPoints.forEach((p, i) => {
+      const k = dateKey(p.date);
+      const entry = set.get(k);
+      if (entry) result.push({ idx: i, ...entry });
+    });
+    return result;
+  }, [events, dayPoints]);
+
+  const hoveredPoint = hoverIdx !== null ? dayPoints[hoverIdx] : null;
+  const hoveredDayEvents = hoveredPoint ? eventsByDayKey.get(dateKey(hoveredPoint.date)) || [] : [];
+
+  // Touch/mouse handlers - extract from event coords
+  const setIdxFromClientX = (clientX) => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const px = ((clientX - rect.left) / rect.width) * W;
+    const i = Math.round(((px - padX) / (W - padX * 2)) * (dayPoints.length - 1));
+    if (i >= 0 && i < dayPoints.length) setHoverIdx(i);
   };
 
-  // Find biggest bar for callout
-  const showCallouts = mode !== 'balance' && weekly.length <= 14;
-  const calloutThreshold = mode === 'bills' ? maxOut * 0.6 : maxIn * 0.6;
+  const handlePointerDown = (e) => {
+    e.preventDefault();
+    setIdxFromClientX(e.clientX);
+  };
+  const handlePointerMove = (e) => {
+    if (e.buttons === 0 && e.pointerType === 'mouse') {
+      setIdxFromClientX(e.clientX);
+    } else {
+      setIdxFromClientX(e.clientX);
+    }
+  };
+  const handlePointerLeave = () => setHoverIdx(null);
 
-  const hoveredWeek = hoverIdx !== null ? weekly[hoverIdx] : null;
-  const hoveredDay = hoverIdx !== null && mode === 'balance' ? dayPoints[hoverIdx] : null;
+  // Touch handling separately for mobile
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onTouch = (e) => {
+      e.preventDefault();
+      const t = e.touches[0] || e.changedTouches[0];
+      if (t) setIdxFromClientX(t.clientX);
+    };
+    const onTouchEnd = () => setHoverIdx(null);
+    svg.addEventListener('touchstart', onTouch, { passive: false });
+    svg.addEventListener('touchmove', onTouch, { passive: false });
+    svg.addEventListener('touchend', onTouchEnd);
+    svg.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      svg.removeEventListener('touchstart', onTouch);
+      svg.removeEventListener('touchmove', onTouch);
+      svg.removeEventListener('touchend', onTouchEnd);
+      svg.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [dayPoints.length]);
 
   return (
     <div
@@ -117,265 +173,249 @@ export function TrajectoryChart({ dayPoints, events }) {
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, padding: '0 4px' }}>
-        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, color: t.textDim }}>
-          {MODES.find((m) => m.id === mode).label}
+        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, color: t.textDim, fontWeight: 600 }}>
+          Balance trajectory
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {MODES.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setMode(m.id)}
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                background: mode === m.id ? t.accent : t.border,
-                border: 'none',
-                padding: 0,
-                cursor: 'pointer',
-              }}
-            />
-          ))}
+        <div style={{ fontSize: 10, color: t.textFaint, letterSpacing: 0.4 }}>
+          {dayPoints.length} days
         </div>
       </div>
 
       <svg
+        ref={svgRef}
         width="100%"
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
-        style={{ display: 'block', cursor: 'pointer' }}
-        onMouseMove={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const px = ((e.clientX - rect.left) / rect.width) * W;
-          if (mode === 'balance') {
-            const i = Math.round(((px - xPad) / (W - xPad * 2)) * (dayPoints.length - 1));
-            if (i >= 0 && i < dayPoints.length) setHoverIdx(i);
-          } else {
-            // find closest week
-            let closest = -1;
-            let closestDist = Infinity;
-            weekly.forEach((wk, wi) => {
-              const wx = dateToX(wk.date);
-              const d = Math.abs(wx - px);
-              if (d < closestDist) {
-                closest = wi;
-                closestDist = d;
-              }
-            });
-            if (closest >= 0) setHoverIdx(closest);
-          }
+        style={{
+          display: 'block',
+          cursor: 'crosshair',
+          touchAction: 'none',
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
         }}
-        onMouseLeave={() => setHoverIdx(null)}
-        onTouchMove={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const tch = e.touches[0];
-          const px = ((tch.clientX - rect.left) / rect.width) * W;
-          if (mode === 'balance') {
-            const i = Math.round(((px - xPad) / (W - xPad * 2)) * (dayPoints.length - 1));
-            if (i >= 0 && i < dayPoints.length) setHoverIdx(i);
-          } else {
-            let closest = -1;
-            let closestDist = Infinity;
-            weekly.forEach((wk, wi) => {
-              const wx = dateToX(wk.date);
-              const d = Math.abs(wx - px);
-              if (d < closestDist) {
-                closest = wi;
-                closestDist = d;
-              }
-            });
-            if (closest >= 0) setHoverIdx(closest);
-          }
-        }}
-        onTouchEnd={() => setHoverIdx(null)}
-        onClick={cycleMode}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={handlePointerLeave}
       >
         <defs>
           <linearGradient id="gradPos" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={t.accent} stopOpacity="0.25" />
+            <stop offset="0%" stopColor={t.accent} stopOpacity="0.32" />
             <stop offset="100%" stopColor={t.accent} stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="gradNeg" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={t.expense} stopOpacity="0" />
+            <stop offset="100%" stopColor={t.expense} stopOpacity="0.22" />
           </linearGradient>
         </defs>
 
-        {/* Zero line */}
-        {yZero > pad && yZero < H - pad && (
+        {/* Month boundary verticals */}
+        {monthBoundaries.map((b, i) => (
+          <g key={i}>
+            <line
+              x1={xDay(b.idx)}
+              x2={xDay(b.idx)}
+              y1={padTop}
+              y2={H - padBottom}
+              stroke={t.border}
+              strokeWidth="1"
+              opacity="0.6"
+            />
+            <text
+              x={xDay(b.idx) + 3}
+              y={H - padBottom + 13}
+              fontSize="9"
+              fill={t.textFaint}
+              fontWeight="600"
+              letterSpacing="0.5"
+            >
+              {b.label}
+            </text>
+          </g>
+        ))}
+
+        {/* First-month label */}
+        <text
+          x={padX + 2}
+          y={H - padBottom + 13}
+          fontSize="9"
+          fill={t.textFaint}
+          fontWeight="600"
+          letterSpacing="0.5"
+        >
+          {monthLabel(dayPoints[0].date)}
+        </text>
+
+        {/* Zero baseline */}
+        {yZero > padTop && yZero < H - padBottom && (
           <line
-            x1={xPad}
-            x2={W - xPad}
+            x1={padX}
+            x2={W - padX}
             y1={yZero}
             y2={yZero}
             stroke={t.borderStrong}
-            strokeDasharray="2 3"
-            strokeWidth="1"
-          />
-        )}
-
-        {/* Floor line */}
-        {mode === 'balance' && yMin <= FLOOR && (
-          <line
-            x1={xPad}
-            x2={W - xPad}
-            y1={y(FLOOR)}
-            y2={y(FLOOR)}
-            stroke={t.expense}
             strokeDasharray="3 3"
             strokeWidth="1"
             opacity="0.5"
           />
         )}
 
-        {/* Weekly bars */}
-        {weekly.map((wk, i) => {
-          const wx = dateToX(wk.date);
-          let v, color;
-          if (mode === 'income') {
-            v = wk.in;
-            color = t.income;
-          } else if (mode === 'bills') {
-            v = wk.out;
-            color = t.expense;
-          } else {
-            // balance mode: show outflows below as red, inflows above as green
-            v = wk.out;
-            color = t.expense;
-          }
-          if (v <= 0 && mode !== 'balance') return null;
-          if (v <= 0 && mode === 'balance' && wk.in <= 0) return null;
+        {/* Fill - green above zero, red below */}
+        <path d={fillPath} fill="url(#gradPos)" />
 
-          if (mode === 'balance') {
-            // Draw both in and out
-            const outH = wk.out > 0 ? ((wk.out - 0) / yRange) * (H - pad * 2) : 0;
-            const inH = wk.in > 0 ? ((wk.in - 0) / yRange) * (H - pad * 2) : 0;
-            return (
-              <g key={i}>
-                {wk.out > 0 && (
-                  <rect
-                    x={wx - barW / 2 - 1}
-                    y={yZero}
-                    width={barW * 0.45}
-                    height={Math.min(outH, H - pad - yZero)}
-                    fill={t.expense}
-                    opacity="0.55"
-                    rx="1"
-                  />
-                )}
-                {wk.in > 0 && (
-                  <rect
-                    x={wx + 1}
-                    y={Math.max(pad, yZero - inH)}
-                    width={barW * 0.45}
-                    height={Math.min(inH, yZero - pad)}
-                    fill={t.income}
-                    opacity="0.55"
-                    rx="1"
-                  />
-                )}
-              </g>
-            );
-          }
+        {/* Line */}
+        <path
+          d={linePath}
+          fill="none"
+          stroke={t.accent}
+          strokeWidth="2"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
 
-          const barH = ((v - yMin) / yRange) * (H - pad * 2);
-          const barTop = y(v);
-          const startY = H - pad;
-          return (
-            <g key={i}>
-              <rect
-                x={wx - barW / 2}
-                y={Math.min(barTop, startY)}
-                width={barW}
-                height={Math.abs(startY - barTop)}
-                fill={color}
-                opacity="0.85"
-                rx="2"
-              />
-              {/* Callout for big bars */}
-              {showCallouts && v >= calloutThreshold && !privacy && (
-                <text
-                  x={wx}
-                  y={barTop - 4}
-                  textAnchor="middle"
-                  fontSize="9"
-                  fill={color}
-                  fontWeight="600"
-                >
-                  {fmtShort(v)}
-                </text>
-              )}
-            </g>
-          );
-        })}
+        {/* Bill activity dots - small, on the line */}
+        {billDays.map((bd, i) => (
+          <circle
+            key={`b-${i}`}
+            cx={xDay(bd.idx)}
+            cy={y(dayPoints[bd.idx].total)}
+            r="2.5"
+            fill={t.expense}
+            opacity="0.8"
+          />
+        ))}
 
-        {/* Balance line + fill */}
-        {mode === 'balance' && (
-          <>
-            <path d={fillPath} fill="url(#gradPos)" />
-            <path
-              d={linePath}
-              fill="none"
-              stroke={t.accent}
-              strokeWidth="1.8"
-              strokeLinejoin="round"
+        {/* Income dots */}
+        {incomeDays.map((id, i) => (
+          <circle
+            key={`i-${i}`}
+            cx={xDay(id.idx)}
+            cy={y(dayPoints[id.idx].total)}
+            r="3"
+            fill={t.income}
+            stroke={t.bg}
+            strokeWidth="1"
+          />
+        ))}
+
+        {/* Negative crossing marker */}
+        {firstNegativeIdx > 0 && (
+          <g>
+            <circle
+              cx={xDay(firstNegativeIdx)}
+              cy={y(dayPoints[firstNegativeIdx].total)}
+              r="4.5"
+              fill={t.expense}
+              stroke={t.bg}
+              strokeWidth="1.5"
             />
-            {firstNegativeIdx > 0 && (
-              <g>
-                <circle
-                  cx={xDay(firstNegativeIdx)}
-                  cy={y(dayPoints[firstNegativeIdx].total)}
-                  r="3.5"
-                  fill={t.expense}
-                />
-                {!privacy && (
-                  <text
-                    x={xDay(firstNegativeIdx)}
-                    y={y(dayPoints[firstNegativeIdx].total) - 7}
-                    textAnchor="middle"
-                    fontSize="9"
-                    fill={t.expense}
-                    fontWeight="600"
-                  >
-                    negative
-                  </text>
-                )}
-              </g>
+            {hoverIdx === null && !privacy && (
+              <text
+                x={xDay(firstNegativeIdx)}
+                y={y(dayPoints[firstNegativeIdx].total) - 8}
+                textAnchor="middle"
+                fontSize="9"
+                fill={t.expense}
+                fontWeight="700"
+              >
+                negative
+              </text>
             )}
-          </>
+          </g>
         )}
 
-        {/* Hover indicator */}
-        {hoverIdx !== null && mode === 'balance' && hoveredDay && (
-          <line
-            x1={xDay(hoverIdx)}
-            x2={xDay(hoverIdx)}
-            y1={pad}
-            y2={H - pad}
-            stroke={t.accent}
-            strokeWidth="0.6"
-            strokeDasharray="2 2"
-            opacity="0.6"
-          />
+        {/* Hover crosshair */}
+        {hoverIdx !== null && (
+          <g>
+            <line
+              x1={xDay(hoverIdx)}
+              x2={xDay(hoverIdx)}
+              y1={padTop}
+              y2={H - padBottom}
+              stroke={t.accent}
+              strokeWidth="1"
+              opacity="0.7"
+            />
+            <circle
+              cx={xDay(hoverIdx)}
+              cy={y(dayPoints[hoverIdx].total)}
+              r="4.5"
+              fill={t.accent}
+              stroke={t.bg}
+              strokeWidth="2"
+            />
+          </g>
         )}
       </svg>
 
-      {/* Hover info or footer */}
-      {hoveredDay && mode === 'balance' ? (
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: t.accent, marginTop: 6, padding: '0 4px' }}>
-          <span>{dayLabel(hoveredDay.date)}</span>
-          <span className={privacy ? 'private-blur' : ''}>{fmt(hoveredDay.total)}</span>
-        </div>
-      ) : hoveredWeek && mode !== 'balance' ? (
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: t.accent, marginTop: 6, padding: '0 4px' }}>
-          <span>w/c {dayLabel(hoveredWeek.date)}</span>
-          <span className={privacy ? 'private-blur' : ''}>
-            {mode === 'bills' ? '−' + fmt(hoveredWeek.out) : '+' + fmt(hoveredWeek.in)}
-          </span>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: t.textFaint, marginTop: 6, padding: '0 4px' }}>
-          <span>{dayLabel(dayPoints[0].date)}</span>
-          <span style={{ color: t.textDim }}>tap chart to cycle · drag to inspect</span>
-          <span>{dayLabel(dayPoints[dayPoints.length - 1].date)}</span>
-        </div>
-      )}
+      {/* Tooltip area */}
+      <div
+        style={{
+          marginTop: 10,
+          minHeight: 56,
+          padding: '10px 12px',
+          background: hoveredPoint ? t.bgInset : 'transparent',
+          borderRadius: 8,
+          transition: 'background 0.15s',
+        }}
+      >
+        {hoveredPoint ? (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+              <div style={{ fontSize: 11, color: t.textDim, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                {dayLabel(hoveredPoint.date)}
+              </div>
+              <div
+                style={{
+                  fontFamily: "'Cormorant Garamond', serif",
+                  fontSize: 18,
+                  fontWeight: t.weightAmount,
+                  color: hoveredPoint.total < 0 ? t.expense : t.text,
+                }}
+                className={privacy ? 'private-blur' : ''}
+              >
+                {fmt(hoveredPoint.total)}
+              </div>
+            </div>
+            {hoveredDayEvents.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
+                {hoveredDayEvents.slice(0, 3).map((ev, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: 11,
+                      color: t.textDim,
+                    }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
+                      {ev.label}
+                    </span>
+                    <span
+                      className={privacy ? 'private-blur' : ''}
+                      style={{
+                        color: ev.amount > 0 ? t.income : t.expense,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {ev.amount > 0 ? '+' : '−'}{fmt(Math.abs(ev.amount))}
+                    </span>
+                  </div>
+                ))}
+                {hoveredDayEvents.length > 3 && (
+                  <div style={{ fontSize: 10, color: t.textFaint, fontStyle: 'italic' }}>
+                    + {hoveredDayEvents.length - 3} more
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ fontSize: 11, color: t.textFaint, textAlign: 'center', paddingTop: 4 }}>
+            tap or drag the chart to inspect any day
+          </div>
+        )}
+      </div>
     </div>
   );
 }

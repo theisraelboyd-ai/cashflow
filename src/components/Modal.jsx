@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Trash2, AlertCircle, Download, Upload, Sun, Moon, Smartphone, Eye, EyeOff } from 'lucide-react';
+import { Trash2, AlertCircle, Download, Upload, Sun, Moon, Smartphone, Eye, EyeOff, Contrast, Type } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, uid, dayLabel, calendarDaysBetween, addDays } from '../lib/format.js';
 import { generateEvents } from '../lib/projection.js';
@@ -18,6 +18,7 @@ export function Modal({ modal, setModal, data, update, setData }) {
         {modal.type === 'reconcile' && <ReconcileForm acc={modal.payload} data={data} update={update} close={close} />}
         {modal.type === 'job' && <JobForm item={modal.payload} data={data} update={update} close={close} />}
         {modal.type === 'salary' && <SalaryForm item={modal.payload} data={data} update={update} close={close} />}
+        {modal.type === 'workpicker' && <WorkPickerForm setModal={setModal} close={close} />}
         {modal.type === 'bill' && <BillForm item={modal.payload} data={data} update={update} close={close} />}
         {modal.type === 'extincome' && <ExtIncomeForm item={modal.payload} data={data} update={update} close={close} />}
         {modal.type === 'transfer' && <TransferForm item={modal.payload} data={data} update={update} close={close} />}
@@ -418,6 +419,65 @@ function JobForm({ item, data, update, close }) {
         {item && <button style={styles.btnDanger} onClick={remove}><Trash2 size={14} /></button>}
         <button style={styles.btnGhost} onClick={close}>Cancel</button>
         <button style={styles.btnPrimary} onClick={submit}>Save</button>
+      </div>
+    </div>
+  );
+}
+
+function WorkPickerForm({ setModal, close }) {
+  const { styles, t } = useTheme();
+
+  const choose = (type) => {
+    close();
+    setTimeout(() => setModal({ type, payload: null }), 50);
+  };
+
+  return (
+    <div>
+      <ModalHeader title="Add new work" sub="What kind of income are you adding?" />
+
+      <button
+        onClick={() => choose('job')}
+        style={{
+          width: '100%',
+          padding: '18px 16px',
+          background: t.bgElev,
+          border: `1px solid ${t.border}`,
+          borderRadius: 12,
+          marginBottom: 10,
+          cursor: 'pointer',
+          textAlign: 'left',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        <div style={{ color: t.text, fontWeight: 600, fontSize: 16 }}>Freelance job</div>
+        <div style={{ color: t.textDim, fontSize: 12 }}>One-off work — day rate × days. Malta or PAYE tax.</div>
+      </button>
+
+      <button
+        onClick={() => choose('salary')}
+        style={{
+          width: '100%',
+          padding: '18px 16px',
+          background: t.bgElev,
+          border: `1px solid ${t.border}`,
+          borderRadius: 12,
+          marginBottom: 10,
+          cursor: 'pointer',
+          textAlign: 'left',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        <div style={{ color: t.text, fontWeight: 600, fontSize: 16 }}>Regular salary</div>
+        <div style={{ color: t.textDim, fontSize: 12 }}>Annual gross paid monthly/weekly. Cumulative PAYE.</div>
+      </button>
+
+      <div style={styles.formActions}>
+        <button style={styles.btnGhost} onClick={close}>Cancel</button>
       </div>
     </div>
   );
@@ -849,7 +909,7 @@ function EarnerForm({ item, data, update, close }) {
 }
 
 function SettingsForm({ data, update, setData, close, setModal }) {
-  const { styles, t, settings, setTheme, privacy, togglePrivacy } = useTheme();
+  const { styles, t, settings, setTheme, setTextScale, privacy, togglePrivacy, textScale } = useTheme();
   const fileRef = useRef(null);
 
   const onExport = () => exportData(data);
@@ -881,10 +941,10 @@ function SettingsForm({ data, update, setData, close, setModal }) {
     <div>
       <ModalHeader title="Settings" />
 
-      {/* Appearance */}
-      <div style={{ marginBottom: 22 }}>
-        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, color: t.textDim, marginBottom: 10 }}>Appearance</div>
-        <div style={styles.segGroup}>
+      {/* Theme */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, color: t.textDim, marginBottom: 10, fontWeight: 600 }}>Theme</div>
+        <div style={{ ...styles.segGroup, flexWrap: 'wrap' }}>
           <Seg active={settings.theme === 'dark'} onClick={() => setTheme('dark')}>
             <Moon size={12} style={{ marginRight: 4, verticalAlign: -1 }} /> Dark
           </Seg>
@@ -894,6 +954,25 @@ function SettingsForm({ data, update, setData, close, setModal }) {
           <Seg active={settings.theme === 'auto'} onClick={() => setTheme('auto')}>
             <Smartphone size={12} style={{ marginRight: 4, verticalAlign: -1 }} /> Auto
           </Seg>
+        </div>
+        <div style={{ marginTop: 6 }}>
+          <Seg active={settings.theme === 'hicontrast'} onClick={() => setTheme('hicontrast')}>
+            <Contrast size={12} style={{ marginRight: 4, verticalAlign: -1 }} /> High contrast (accessibility)
+          </Seg>
+        </div>
+      </div>
+
+      {/* Text size */}
+      <div style={{ marginBottom: 22 }}>
+        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, color: t.textDim, marginBottom: 10, fontWeight: 600 }}>
+          <Type size={11} style={{ marginRight: 4, verticalAlign: -1 }} />
+          Text size
+        </div>
+        <div style={styles.segGroup}>
+          <Seg active={textScale === 0.9} onClick={() => setTextScale(0.9)}>Small</Seg>
+          <Seg active={textScale === 1.0} onClick={() => setTextScale(1.0)}>Default</Seg>
+          <Seg active={textScale === 1.15} onClick={() => setTextScale(1.15)}>Large</Seg>
+          <Seg active={textScale === 1.3} onClick={() => setTextScale(1.3)}>X-Large</Seg>
         </div>
       </div>
 

@@ -23,9 +23,9 @@ export function ThemeProvider({ children }) {
 
   const themeName = resolveTheme(settings.theme);
   const t = themes[themeName];
-  const styles = useMemo(() => buildStyles(t), [themeName]);
+  const textScale = settings.textScale || 1;
+  const styles = useMemo(() => buildStyles(t, textScale), [themeName, textScale]);
 
-  // Sync body bg so pull-to-refresh / overscroll matches
   useEffect(() => {
     document.body.style.background = t.bg;
     document.body.style.color = t.text;
@@ -46,10 +46,12 @@ export function ThemeProvider({ children }) {
     styles,
     themeName,
     settings,
+    textScale,
     updateSettings,
     privacy: !!settings.privacy,
     togglePrivacy: () => updateSettings({ privacy: !settings.privacy }),
     setTheme: (theme) => updateSettings({ theme }),
+    setTextScale: (textScale) => updateSettings({ textScale }),
   };
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
