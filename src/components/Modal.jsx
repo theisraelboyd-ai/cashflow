@@ -691,24 +691,33 @@ function SalaryForm({ item, data, update, close }) {
 }
 
 function BillForm({ item, data, update, close }) {
-  const { styles, viewingAs } = useTheme();
+  const { styles, viewingAs, t } = useTheme();
   const [name, setName] = useState(item?.name || '');
   const [amount, setAmount] = useState(item?.amount ?? 0);
   const [frequency, setFrequency] = useState(item?.frequency || 'monthly');
   const [dayOfMonth, setDayOfMonth] = useState(item?.dayOfMonth ?? 1);
   const [date, setDate] = useState(item?.date || new Date().toISOString().slice(0, 10));
-  const [accountId, setAccountId] = useState(item?.accountId || data.accounts[0]?.id);
+  // Default account: if viewing as a specific earner, default to one of their accounts;
+  // otherwise default to the first account
+  const defaultAccount = useMemo(() => {
+    if (item?.accountId) return item.accountId;
+    if (viewingAs !== 'household') {
+      const own = data.accounts.find((a) => a.ownerId === viewingAs);
+      if (own) return own.id;
+    }
+    return data.accounts[0]?.id;
+  }, [item, viewingAs, data.accounts]);
+  const [accountId, setAccountId] = useState(defaultAccount);
   const [category, setCategory] = useState(item?.category || '');
-  const [ownerId, setOwnerId] = useState(
-    item?.ownerId || (viewingAs !== 'household' ? viewingAs : 'household')
-  );
 
   const submit = () => {
-    const obj = { name, amount: Number(amount), frequency, dayOfMonth: Number(dayOfMonth), date, accountId, category, ownerId };
+    const obj = { name, amount: Number(amount), frequency, dayOfMonth: Number(dayOfMonth), date, accountId, category };
     update((d) => {
       if (item) {
         const idx = d.bills.findIndex((b) => b.id === item.id);
-        d.bills[idx] = { ...item, ...obj };
+        // Strip any legacy ownerId
+        const { ownerId, ...keep } = d.bills[idx];
+        d.bills[idx] = { ...keep, ...obj };
       } else {
         d.bills.push({ id: uid(), ...obj });
       }
@@ -722,7 +731,14 @@ function BillForm({ item, data, update, close }) {
     close();
   };
 
-  const showOwners = data.earners && data.earners.length > 0;
+  // Helper to show whose bill this becomes based on selected account
+  const selectedAccount = data.accounts.find((a) => a.id === accountId);
+  const ownerLabel = (() => {
+    if (!selectedAccount) return null;
+    if (selectedAccount.ownerId === 'household' || !selectedAccount.ownerId) return 'Household bill';
+    const earner = data.earners.find((e) => e.id === selectedAccount.ownerId);
+    return earner ? `${earner.name}'s bill` : null;
+  })();
 
   return (
     <div>
@@ -733,11 +749,6 @@ function BillForm({ item, data, update, close }) {
       <Field label="Amount (£)">
         <input style={styles.input} type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
       </Field>
-      {showOwners && (
-        <Field label="Whose bill">
-          <OwnerSelector value={ownerId} onChange={setOwnerId} earners={data.earners} />
-        </Field>
-      )}
       <Field label="Frequency">
         <div style={styles.segGroup}>
           <Seg active={frequency === 'monthly'} onClick={() => setFrequency('monthly')}>Monthly</Seg>
@@ -760,6 +771,11 @@ function BillForm({ item, data, update, close }) {
         <select style={styles.input} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
           {data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
+        {ownerLabel && (
+          <div style={{ fontSize: 11, color: t.textFaint, marginTop: 6, fontStyle: 'italic' }}>
+            {ownerLabel} (derived from account)
+          </div>
+        )}
       </Field>
       <Field label="Category">
         <input style={styles.input} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Optional" />

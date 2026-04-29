@@ -1,10 +1,10 @@
 import React, { useMemo } from 'react';
-import { Plus, AlertTriangle, Briefcase, Receipt, TrendingUp, Coins, Settings, Eye, EyeOff, Pencil } from 'lucide-react';
+import { Plus, AlertTriangle, Briefcase, Receipt, TrendingUp, Coins, Settings, Eye, EyeOff, Pencil, Home as HomeIcon } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, greeting, dayLabel, addDays } from '../lib/format.js';
 import { generateEvents, projectBalances } from '../lib/projection.js';
 import { buildJobTaxLedger } from '../lib/tax.js';
-import { applyViewFilter } from '../lib/viewFilter.js';
+import { applyViewFilter, isHouseholdAccount } from '../lib/viewFilter.js';
 import { Money, ViewingAsSwitch } from './atoms.jsx';
 
 export function Home({ data, setPage, setModal }) {
@@ -24,6 +24,57 @@ export function Home({ data, setPage, setModal }) {
   );
   const projectedTotal = projection.dayPoints[projection.dayPoints.length - 1]?.total || totalLiquid;
   const firstNegative = projection.dayPoints.find((p) => p.total < 0);
+
+  // Household-level computations - independent of viewingAs
+  const householdHealth = useMemo(() => {
+    const householdAccountIds = new Set(
+      data.accounts.filter(isHouseholdAccount).map((a) => a.id)
+    );
+    if (householdAccountIds.size === 0) return null;
+
+    // Monthly equivalent of bills paying from household accounts
+    const householdBills = data.bills.filter((b) => householdAccountIds.has(b.accountId));
+    const monthlyBillsOut = householdBills.reduce((s, b) => {
+      const amt = Number(b.amount) || 0;
+      if (b.frequency === 'monthly') return s + amt;
+      if (b.frequency === 'weekly') return s + amt * 4.33;
+      if (b.frequency === 'yearly') return s + amt / 12;
+      return s;
+    }, 0);
+
+    // Monthly inflow: external income paying into household accounts + transfers TO household accounts
+    const monthlyExtIncomeIn = (data.externalIncome || [])
+      .filter((e) => householdAccountIds.has(e.accountId))
+      .reduce((s, e) => {
+        const amt = Number(e.amount) || 0;
+        if (e.frequency === 'monthly') return s + amt;
+        if (e.frequency === 'weekly') return s + amt * 4.33;
+        return s;
+      }, 0);
+
+    const monthlyTransfersIn = (data.transfers || [])
+      .filter((tr) => householdAccountIds.has(tr.toAccountId) && !householdAccountIds.has(tr.fromAccountId))
+      .reduce((s, tr) => {
+        const amt = Number(tr.amount) || 0;
+        if (tr.frequency === 'monthly') return s + amt;
+        if (tr.frequency === 'weekly') return s + amt * 4.33;
+        return s;
+      }, 0);
+
+    const monthlyIn = monthlyExtIncomeIn + monthlyTransfersIn;
+    const surplus = monthlyIn - monthlyBillsOut;
+    const householdBalance = data.accounts
+      .filter(isHouseholdAccount)
+      .reduce((s, a) => s + Number(a.balance), 0);
+
+    return {
+      monthlyIn,
+      monthlyBillsOut,
+      surplus,
+      householdBalance,
+      hasContent: monthlyIn > 0 || monthlyBillsOut > 0,
+    };
+  }, [data]);
 
   // Greeting becomes personalised when viewing as an earner
   const earnerView = data.earners.find((e) => e.id === viewingAs);
@@ -85,6 +136,11 @@ export function Home({ data, setPage, setModal }) {
         ))}
       </div>
 
+      {/* Joint health - only show if there are household accounts with activity */}
+      {householdHealth && householdHealth.hasContent && (
+        <JointHealthCard health={householdHealth} />
+      )}
+
       <div style={styles.sectionHead}>
         <h2 style={styles.h2}>Quick view</h2>
       </div>
@@ -103,7 +159,13 @@ export function Home({ data, setPage, setModal }) {
         <QuickCard
           icon={<Receipt size={18} />}
           label="Monthly bills"
-          value={fmt(viewData.bills.filter((b) => b.frequency === 'monthly').reduce((s, b) => s + Number(b.amount), 0))}
+          value={fmt(viewData.bills.reduce((s, b) => {
+            const amt = Number(b.amount) || 0;
+            if (b.frequency === 'monthly') return s + amt;
+            if (b.frequency === 'weekly') return s + amt * 4.33;
+            if (b.frequency === 'yearly') return s + amt / 12;
+            return s;
+          }, 0))}
           sub={`${viewData.bills.length} bills`}
           onClick={() => setPage('activity')}
         />
@@ -127,6 +189,91 @@ export function Home({ data, setPage, setModal }) {
   );
 }
 
+function JointHealthCard({ health }) {
+  const { t, privacy } = useTheme();
+  const isHealthy = health.surplus >= 0;
+  const surplusColor = isHealthy ? t.income : t.expense;
+  const sign = isHealthy ? '+' : '−';
+
+  return (
+    <div
+      style={{
+        marginTop: 22,
+        background: t.bgElev,
+        border: `1px solid ${t.secondary}55`,
+        borderRadius: 12,
+        padding: 16,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <HomeIcon size={14} style={{ color: t.secondary }} />
+          <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5, color: t.secondary, fontWeight: 600 }}>
+            Household pot
+          </div>
+        </div>
+        <div
+          style={{
+            fontSize: 10,
+            padding: '3px 8px',
+            borderRadius: 999,
+            background: isHealthy ? t.incomeBg : t.expenseBg,
+            color: surplusColor,
+            fontWeight: 700,
+            letterSpacing: 0.5,
+            textTransform: 'uppercase',
+          }}
+        >
+          {isHealthy ? 'sustaining' : 'shortfall'}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: t.textDim, paddingBottom: 6 }}>
+        <span>Inflow / mo</span>
+        <span style={{ color: t.income, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+          +{fmt(health.monthlyIn)}
+        </span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: t.textDim, paddingBottom: 6 }}>
+        <span>Bills / mo</span>
+        <span style={{ color: t.expense, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+          −{fmt(health.monthlyBillsOut)}
+        </span>
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: 14,
+          paddingTop: 8,
+          marginTop: 4,
+          borderTop: `1px solid ${t.border}`,
+          fontWeight: 600,
+        }}
+      >
+        <span style={{ color: t.text }}>Monthly surplus</span>
+        <span
+          style={{
+            color: surplusColor,
+            fontFamily: "'Cormorant Garamond', serif",
+            fontSize: 18,
+            fontWeight: t.weightAmount,
+          }}
+          className={privacy ? 'private-blur' : ''}
+        >
+          {sign}{fmt(Math.abs(health.surplus))}
+        </span>
+      </div>
+
+      {!isHealthy && (
+        <div style={{ marginTop: 10, fontSize: 11, color: t.textFaint, fontStyle: 'italic', lineHeight: 1.4 }}>
+          Joint outflow exceeds inflow. Consider increasing contributions or reducing household bills.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AccountRow({ acc, setModal, data }) {
   const { styles, t, privacy } = useTheme();
   const lastUpdate = new Date(acc.lastUpdated);
@@ -141,13 +288,19 @@ function AccountRow({ acc, setModal, data }) {
 
   const showVariance = daysSince > 0 && Math.abs(Number(acc.balance) - expected) > 0.01;
   const accountColor = t.accountColors[acc.colorIdx ?? 0] || t.accent;
+  const isHouseholdAcc = acc.ownerId === 'household' || !acc.ownerId;
 
   return (
     <div style={styles.accountRow} onClick={() => setModal({ type: 'reconcile', payload: acc })}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
         <div style={{ ...styles.accountDot, background: accountColor }} />
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 500, fontSize: 15, color: t.text }}>{acc.name}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500, fontSize: 15, color: t.text }}>
+            {acc.name}
+            {isHouseholdAcc && (
+              <HomeIcon size={12} style={{ color: t.secondary, opacity: 0.8 }} title="Household account" />
+            )}
+          </div>
           <div style={styles.accountMeta}>
             {daysSince === 0 ? 'updated today' : `${daysSince}d ago`}
           </div>

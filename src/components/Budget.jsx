@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
-import { fmt, monthLabel, startOfMonth, endOfMonth, addMonths, dayLabel, dateKey } from '../lib/format.js';
+import { fmt, monthLabel, monthLongLabel, startOfMonth, endOfMonth, addMonths, dayLabel, dateKey } from '../lib/format.js';
 import { projectBalances, generateEvents } from '../lib/projection.js';
 import { applyViewFilter } from '../lib/viewFilter.js';
 import { PageHeader, Toggle, Money, ViewingAsSwitch } from './atoms.jsx';
@@ -11,10 +11,11 @@ export function Budget({ data, setModal }) {
   const { styles, t, privacy, viewingAs } = useTheme();
   const [horizon, setHorizon] = useState(3);
   const [mode, setMode] = useState('realistic');
+  // monthOffset: 0 = current month, +1 = next month, -1 = previous, etc.
+  const [monthOffset, setMonthOffset] = useState(0);
 
   const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
 
-  // Map an event from chart back to its underlying record so we can open it in modal
   const onTapEvent = (ev) => {
     if (!setModal) return;
     if (ev.type === 'bill' && ev.billId) {
@@ -30,7 +31,7 @@ export function Budget({ data, setModal }) {
       const item = data.externalIncome.find((e) => e.id === ev.extincomeId);
       if (item) setModal({ type: 'extincome', payload: item });
     } else if ((ev.type === 'transfer-out' || ev.type === 'transfer-in') && ev.transferId) {
-      const tr = data.transfers.find((t) => t.id === ev.transferId);
+      const tr = data.transfers.find((tr) => tr.id === ev.transferId);
       if (tr) setModal({ type: 'transfer', payload: tr });
     }
   };
@@ -38,9 +39,8 @@ export function Budget({ data, setModal }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Always start projection at the beginning of the current month, regardless of horizon.
-  // This way 1m view shows the full current month even if today is the 29th.
-  const projStart = startOfMonth(today);
+  // Projection start = beginning of (current month + offset)
+  const projStart = startOfMonth(addMonths(today, monthOffset));
   const endDate = endOfMonth(addMonths(projStart, horizon - 1));
 
   const projection = useMemo(() => {
@@ -48,25 +48,29 @@ export function Budget({ data, setModal }) {
       ? { includeSpeculative: false, likelyWeight: 0.75 }
       : { includeSpeculative: true, likelyWeight: 1.0 };
 
-    // We need to back-calculate the balance as of projStart.
-    // Current account balances are "as of today". To get "as of projStart",
-    // reverse-apply all events between projStart and today.
-    const monthEventsToToday = generateEvents(viewData, projStart, today, opts);
-    const adjustedData = {
-      ...viewData,
-      accounts: viewData.accounts.map((a) => {
-        let bal = Number(a.balance);
-        monthEventsToToday.forEach((ev) => {
-          if (ev.accountId === a.id && ev.date <= today) {
-            bal -= ev.amount;  // reverse the event
-          }
+    // Compute the balance at projStart by reverse-applying events between today and projStart.
+    // If projStart is in the past: subtract events that have happened since projStart.
+    // If projStart is in the future: add events that will happen between now and projStart.
+    const adjustedAccounts = viewData.accounts.map((a) => {
+      let bal = Number(a.balance);
+      if (projStart < today) {
+        // Reverse events that occurred from projStart up to today
+        const past = generateEvents(viewData, projStart, today, opts);
+        past.forEach((ev) => {
+          if (ev.accountId === a.id && ev.date <= today) bal -= ev.amount;
         });
-        return { ...a, balance: bal };
-      }),
-    };
+      } else if (projStart > today) {
+        // Apply events that will occur between today and projStart
+        const future = generateEvents(viewData, today, projStart, opts);
+        future.forEach((ev) => {
+          if (ev.accountId === a.id && ev.date < projStart) bal += ev.amount;
+        });
+      }
+      return { ...a, balance: bal };
+    });
 
-    return projectBalances(adjustedData, projStart, endDate, opts);
-  }, [viewData, horizon, mode]);
+    return projectBalances({ ...viewData, accounts: adjustedAccounts }, projStart, endDate, opts);
+  }, [viewData, horizon, mode, monthOffset]);
 
   const { dayPoints, events } = projection;
   const startTotal = dayPoints[0]?.total || 0;
@@ -95,6 +99,14 @@ export function Budget({ data, setModal }) {
     return months;
   }, [events, dayPoints, horizon, projStart]);
 
+  // Window label for the title - "April 2026" or "Apr–Jun 2026"
+  const windowLabel = useMemo(() => {
+    const startLbl = monthLongLabel(projStart);
+    if (horizon === 1) return startLbl;
+    const endLbl = monthLongLabel(endOfMonth(addMonths(projStart, horizon - 1)));
+    return `${monthLabel(projStart)}–${monthLabel(endOfMonth(addMonths(projStart, horizon - 1)))}`;
+  }, [projStart, horizon]);
+
   return (
     <div style={styles.page}>
       <PageHeader title="Budget" eyebrow="Cash flow projection" right={<ViewingAsSwitch earners={data.earners} />} />
@@ -108,6 +120,47 @@ export function Budget({ data, setModal }) {
         {[1, 3, 6, 12].map((n) => (
           <Toggle key={n} active={horizon === n} onClick={() => setHorizon(n)} small>{n}m</Toggle>
         ))}
+      </div>
+
+      {/* Month stepper - shows window and lets you step backwards/forwards */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 16,
+          padding: '8px 12px',
+          background: t.bgElev,
+          border: `1px solid ${t.border}`,
+          borderRadius: 10,
+        }}
+      >
+        <button onClick={() => setMonthOffset(monthOffset - 1)} style={styles.iconBtn}>
+          <ChevronLeft size={16} />
+        </button>
+        <div style={{ textAlign: 'center', flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: t.text }}>{windowLabel}</div>
+          {monthOffset !== 0 && (
+            <button
+              onClick={() => setMonthOffset(0)}
+              style={{
+                fontSize: 10,
+                color: t.accent,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                marginTop: 2,
+                padding: 0,
+                fontWeight: 600,
+              }}
+            >
+              jump to today
+            </button>
+          )}
+        </div>
+        <button onClick={() => setMonthOffset(monthOffset + 1)} style={styles.iconBtn}>
+          <ChevronRight size={16} />
+        </button>
       </div>
 
       <div style={styles.heroCard}>

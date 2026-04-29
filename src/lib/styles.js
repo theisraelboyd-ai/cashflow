@@ -14,7 +14,7 @@ export function buildStyles(t, scale = 1, isDesktop = false) {
       transition: 'background 0.25s ease, color 0.25s ease',
     },
     shell: {
-      maxWidth: isDesktop ? 1100 : 480,
+      maxWidth: isDesktop ? 1600 : 480,
       margin: '0 auto',
       paddingBottom: isDesktop ? 24 : 80,
       paddingLeft: isDesktop ? 220 : 0,  // Space for sidebar nav on desktop
@@ -23,7 +23,7 @@ export function buildStyles(t, scale = 1, isDesktop = false) {
     },
     page: {
       padding: isDesktop ? '32px 40px 40px' : '24px 20px 40px',
-      maxWidth: isDesktop ? 880 : '100%',
+      maxWidth: isDesktop ? 1280 : '100%',
     },
     header: {
       display: 'flex',
@@ -348,7 +348,7 @@ export function buildStyles(t, scale = 1, isDesktop = false) {
     nav: isDesktop ? {
       position: 'fixed',
       top: 0,
-      left: 'max(0px, calc((100vw - 1100px) / 2))',
+      left: 'max(0px, calc((100vw - 1600px) / 2))',
       width: 200,
       height: '100vh',
       display: 'flex',

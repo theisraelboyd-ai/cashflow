@@ -3,7 +3,9 @@ import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, fmtShort, dayLabel, dateKey, monthLabel } from '../lib/format.js';
 
 export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
-  const { t, privacy } = useTheme();
+  const { t, privacy, isDesktop } = useTheme();
+  const W = isDesktop ? 800 : 320;
+  const H = isDesktop ? 280 : 200;
   const [hoverIdx, setHoverIdx] = useState(null);
   const [stickyIdx, setStickyIdx] = useState(null);
   const svgRef = useRef(null);
@@ -20,8 +22,6 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
 
   if (!dayPoints || dayPoints.length === 0) return null;
 
-  const W = 320;
-  const H = 200;
   const padTop = 14;
   const padBottom = 22;
   const padX = 10;
@@ -51,6 +51,38 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
     `M ${xDay(0)} ${yZero} ` +
     dayPoints.map((p, i) => `L ${xDay(i)} ${y(p.total)}`).join(' ') +
     ` L ${xDay(dayPoints.length - 1)} ${yZero} Z`;
+
+  // Compute coloured segments for long horizons. We only segment if there are
+  // many data points - on short horizons the dots themselves carry the info.
+  const longHorizon = dayPoints.length > 90;
+
+  const segmentColor = (kind) => {
+    if (kind === 'down') return t.expense;
+    if (kind === 'up') return t.income;
+    return t.accent;
+  };
+
+  const lineSegments = useMemo(() => {
+    if (!longHorizon || dayPoints.length < 2) return [];
+    const classifySeg = (a, b) => {
+      const delta = b - a;
+      const threshold = Math.max(50, Math.abs(a) * 0.005);
+      if (delta < -threshold) return 'down';
+      if (delta > threshold) return 'up';
+      return 'flat';
+    };
+    const segments = [];
+    let cur = { kind: classifySeg(dayPoints[0].total, dayPoints[1].total), startIdx: 0 };
+    for (let i = 1; i < dayPoints.length; i++) {
+      const k = classifySeg(dayPoints[i - 1].total, dayPoints[i].total);
+      if (k !== cur.kind) {
+        segments.push({ ...cur, endIdx: i });
+        cur = { kind: k, startIdx: i };
+      }
+    }
+    segments.push({ ...cur, endIdx: dayPoints.length - 1 });
+    return segments;
+  }, [dayPoints, longHorizon]);
 
   const firstNegativeIdx = dayPoints.findIndex((p) => p.total < 0);
 
@@ -90,7 +122,7 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
   const showFirstMonthLabel = monthBoundaries.length === 0 || monthBoundaries[0].idx > dayPoints.length * 0.14;
 
   // Bills + income marker positions, with a hit-test list for snap-to-event
-  const billDays = useMemo(() => {
+  const billDaysRaw = useMemo(() => {
     const dayMap = new Map();
     events.forEach((ev) => {
       if (ev.type !== 'bill' && ev.type !== 'transfer-out') return;
@@ -109,7 +141,7 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
     return result;
   }, [events, dayPoints]);
 
-  const incomeDays = useMemo(() => {
+  const incomeDaysRaw = useMemo(() => {
     const dayMap = new Map();
     events.forEach((ev) => {
       if (ev.type !== 'job' && ev.type !== 'salary' && ev.type !== 'extincome' && ev.type !== 'transfer-in') return;
@@ -127,6 +159,32 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
     });
     return result;
   }, [events, dayPoints]);
+
+  // Density adaptation: only show dots when there's enough room.
+  // Approx ~6-8px between dots is the readable threshold.
+  // For long horizons, show only the largest-magnitude events.
+  const totalDots = billDaysRaw.length + incomeDaysRaw.length;
+  const minDotSpacing = 7;  // SVG units
+  const availableWidth = W - padX * 2;
+  const maxComfortableDots = Math.floor(availableWidth / minDotSpacing);
+
+  // If we have too many dots, sort by magnitude and keep the top N
+  const billDays = useMemo(() => {
+    if (totalDots <= maxComfortableDots) return billDaysRaw;
+    // Combine both lists, sort by absolute value, take top maxDots, then split back
+    const allMarkers = [...billDaysRaw.map((d) => ({ ...d, _kind: 'bill' })), ...incomeDaysRaw.map((d) => ({ ...d, _kind: 'income' }))];
+    allMarkers.sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    return allMarkers.filter((d) => d._kind === 'bill').slice(0, Math.ceil(maxComfortableDots * 0.6));
+  }, [billDaysRaw, incomeDaysRaw, totalDots, maxComfortableDots]);
+
+  const incomeDays = useMemo(() => {
+    if (totalDots <= maxComfortableDots) return incomeDaysRaw;
+    const allMarkers = [...billDaysRaw.map((d) => ({ ...d, _kind: 'bill' })), ...incomeDaysRaw.map((d) => ({ ...d, _kind: 'income' }))];
+    allMarkers.sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    return allMarkers.filter((d) => d._kind === 'income').slice(0, Math.ceil(maxComfortableDots * 0.4));
+  }, [billDaysRaw, incomeDaysRaw, totalDots, maxComfortableDots]);
+
+  const isCompacted = totalDots > maxComfortableDots;
 
   const hoveredPoint = hoverIdx !== null ? dayPoints[hoverIdx] : null;
   const hoveredDayEvents = hoveredPoint ? eventsByDayKey.get(dateKey(hoveredPoint.date)) || [] : [];
@@ -359,14 +417,36 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent }) {
 
         <path d={fillPath} fill="url(#gradPos)" />
 
-        <path
-          d={linePath}
-          fill="none"
-          stroke={t.accent}
-          strokeWidth="2"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
+        {longHorizon ? (
+          // Coloured segments based on direction
+          lineSegments.map((seg, i) => {
+            const ptsPath = [];
+            for (let j = seg.startIdx; j <= seg.endIdx; j++) {
+              ptsPath.push(`${j === seg.startIdx ? 'M' : 'L'} ${xDay(j)} ${y(dayPoints[j].total)}`);
+            }
+            return (
+              <path
+                key={`seg-${i}`}
+                d={ptsPath.join(' ')}
+                fill="none"
+                stroke={segmentColor(seg.kind)}
+                strokeWidth="2"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                opacity={seg.kind === 'flat' ? 0.6 : 0.95}
+              />
+            );
+          })
+        ) : (
+          <path
+            d={linePath}
+            fill="none"
+            stroke={t.accent}
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        )}
 
         {billDays.map((bd, i) => (
           <circle

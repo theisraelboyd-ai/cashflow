@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 const STORAGE_KEY = 'cashflow_v3';
 
 export const defaultData = {
-  schemaVersion: 5,
+  schemaVersion: 6,
   earners: [
     { id: 'self', name: 'You', isPrimary: true },
   ],
@@ -70,16 +70,17 @@ export function useStoredData() {
           taxMode: j.taxMode === 'service' ? 'malta' : j.taxMode,
           earnerId: j.earnerId || 'self',
         }));
-        // Schema v5: add ownerId to accounts and bills (defaults to household)
+        // Schema v5: add ownerId to accounts (defaults to household)
         merged.accounts = merged.accounts.map((a) => ({
           ...a,
           ownerId: a.ownerId || 'household',
         }));
-        merged.bills = merged.bills.map((b) => ({
-          ...b,
-          ownerId: b.ownerId || 'household',
-        }));
-        merged.schemaVersion = 5;
+        // Schema v6: bills no longer have ownerId. Ownership derived from account.
+        merged.bills = merged.bills.map((b) => {
+          const { ownerId, ...rest } = b;
+          return rest;
+        });
+        merged.schemaVersion = 6;
         setData(merged);
       } else {
         setData(defaultData);

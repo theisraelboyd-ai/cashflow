@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, ArrowRightLeft } from 'lucide-react';
+import { Plus, ArrowRightLeft, Home } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, dayLabel, monthLongLabel, startOfMonth } from '../lib/format.js';
 import {
@@ -12,7 +12,7 @@ import {
   CLASS_2_ANNUAL,
   DEFAULT_EARNER_ID,
 } from '../lib/tax.js';
-import { applyViewFilter } from '../lib/viewFilter.js';
+import { applyViewFilter, classifyBillOwnership } from '../lib/viewFilter.js';
 import { PageHeader, SummaryCell, Empty, Toggle, AddButton, Money, ViewingAsSwitch } from './atoms.jsx';
 
 export function Activity({ data, setModal }) {
@@ -313,20 +313,43 @@ function JobCard({ job, setModal, data, ledger }) {
 }
 
 function BillsContent({ data, viewData, setModal }) {
-  const { styles, t } = useTheme();
-  const monthly = viewData.bills.filter((b) => b.frequency === 'monthly');
-  const weekly = viewData.bills.filter((b) => b.frequency === 'weekly');
-  const oneoff = viewData.bills.filter((b) => b.frequency === 'oneoff');
-  const yearly = viewData.bills.filter((b) => b.frequency === 'yearly');
+  const { styles, t, viewingAs } = useTheme();
 
-  const totalMonthly = monthly.reduce((s, b) => s + Number(b.amount), 0);
-  const totalAnnualised =
-    totalMonthly * 12 +
-    weekly.reduce((s, b) => s + Number(b.amount) * 52, 0) +
-    yearly.reduce((s, b) => s + Number(b.amount), 0);
+  // Classify each bill as 'mine' or 'household' based on its account ownership
+  const classified = useMemo(() => {
+    const mine = [];
+    const household = [];
+    viewData.bills.forEach((b) => {
+      const which = classifyBillOwnership(b, data.accounts, viewingAs);
+      if (which === 'household') household.push(b);
+      else mine.push(b);
+    });
+    return { mine, household };
+  }, [viewData.bills, data.accounts, viewingAs]);
+
+  const computeMonthlyEquivalent = (bills) => {
+    let total = 0;
+    bills.forEach((b) => {
+      const amt = Number(b.amount) || 0;
+      if (b.frequency === 'monthly') total += amt;
+      else if (b.frequency === 'weekly') total += amt * 4.33;
+      else if (b.frequency === 'yearly') total += amt / 12;
+      // one-off excluded from monthly equivalent
+    });
+    return total;
+  };
+
+  const myMonthly = computeMonthlyEquivalent(classified.mine);
+  const householdMonthly = computeMonthlyEquivalent(classified.household);
+  const totalMonthly = myMonthly + householdMonthly;
 
   const sortBills = (arr) =>
     [...arr].sort((a, b) => {
+      // Group by frequency, then sort within
+      const order = { monthly: 0, weekly: 1, yearly: 2, oneoff: 3 };
+      const fa = order[a.frequency] ?? 9;
+      const fb = order[b.frequency] ?? 9;
+      if (fa !== fb) return fa - fb;
       if (a.frequency === 'monthly') return (a.dayOfMonth || 1) - (b.dayOfMonth || 1);
       if (a.frequency === 'oneoff' || a.frequency === 'yearly') {
         return new Date(a.date) - new Date(b.date);
@@ -334,23 +357,91 @@ function BillsContent({ data, viewData, setModal }) {
       return 0;
     });
 
+  const showSplit = viewingAs !== 'household' && (classified.mine.length > 0 || classified.household.length > 0);
+
   return (
     <div>
-      <div style={styles.summaryGrid2}>
-        <SummaryCell label="Monthly" value={fmt(totalMonthly)} />
-        <SummaryCell label="Annualised" value={fmt(totalAnnualised)} />
-      </div>
+      {/* Summary cards - split into mine + household when viewing as a single earner */}
+      {showSplit ? (
+        <div style={styles.summaryGrid3}>
+          <SummaryCell label="Yours" value={fmt(myMonthly)} accent={t.accent} />
+          <SummaryCell label="Household" value={fmt(householdMonthly)} accent={t.secondary} />
+          <SummaryCell label="Total" value={fmt(totalMonthly)} />
+        </div>
+      ) : (
+        <div style={styles.summaryGrid2}>
+          <SummaryCell label="Monthly" value={fmt(totalMonthly)} />
+          <SummaryCell label="Annualised" value={fmt(totalMonthly * 12)} />
+        </div>
+      )}
 
-      {monthly.length === 0 && weekly.length === 0 && oneoff.length === 0 && yearly.length === 0 && (
+      {viewData.bills.length === 0 && (
         <div style={{ marginTop: 22 }}>
           <Empty msg="No bills yet. Tap + to add one." />
         </div>
       )}
 
-      {monthly.length > 0 && <BillGroup title="Monthly" bills={sortBills(monthly)} setModal={setModal} data={data} />}
-      {weekly.length > 0 && <BillGroup title="Weekly" bills={weekly} setModal={setModal} data={data} />}
-      {yearly.length > 0 && <BillGroup title="Yearly" bills={sortBills(yearly)} setModal={setModal} data={data} />}
-      {oneoff.length > 0 && <BillGroup title="One-off" bills={sortBills(oneoff)} setModal={setModal} data={data} />}
+      {/* Sectioned bills - Yours first, then Household */}
+      {showSplit ? (
+        <>
+          {classified.mine.length > 0 && (
+            <BillSection
+              title="Yours"
+              monthlyTotal={myMonthly}
+              bills={sortBills(classified.mine)}
+              setModal={setModal}
+              data={data}
+            />
+          )}
+          {classified.household.length > 0 && (
+            <BillSection
+              title="Household"
+              monthlyTotal={householdMonthly}
+              bills={sortBills(classified.household)}
+              setModal={setModal}
+              data={data}
+              isHousehold
+            />
+          )}
+        </>
+      ) : (
+        <BillSection
+          title="All bills"
+          monthlyTotal={totalMonthly}
+          bills={sortBills(viewData.bills)}
+          setModal={setModal}
+          data={data}
+        />
+      )}
+    </div>
+  );
+}
+
+function BillSection({ title, monthlyTotal, bills, setModal, data, isHousehold }) {
+  const { t } = useTheme();
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 10,
+          paddingBottom: 6,
+          borderBottom: `1px solid ${t.border}`,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1.5, color: t.textDim, fontWeight: 600 }}>
+          {isHousehold && <Home size={11} style={{ color: t.secondary }} />}
+          {title}
+        </div>
+        <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: t.weightAmount, color: isHousehold ? t.secondary : t.accent }}>
+          {fmt(monthlyTotal)}/mo
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {bills.map((b) => <BillCard key={b.id} bill={b} setModal={setModal} data={data} />)}
+      </div>
     </div>
   );
 }
@@ -389,23 +480,10 @@ function MovementsContent({ data, viewData, setModal }) {
   );
 }
 
-function BillGroup({ title, bills, setModal, data }) {
-  const { t } = useTheme();
-  return (
-    <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5, color: t.textDim, marginBottom: 10 }}>
-        {title}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {bills.map((b) => <BillCard key={b.id} bill={b} setModal={setModal} data={data} />)}
-      </div>
-    </div>
-  );
-}
-
 function BillCard({ bill, setModal, data }) {
   const { styles, t, privacy } = useTheme();
   const acc = data.accounts.find((a) => a.id === bill.accountId);
+  const isHouseholdBill = !acc || acc.ownerId === 'household' || !acc.ownerId;
   const dateLabel = bill.frequency === 'oneoff' ? dayLabel(bill.date)
     : bill.frequency === 'monthly' ? `day ${bill.dayOfMonth || 1}`
     : bill.frequency === 'yearly' ? dayLabel(bill.date)
@@ -413,10 +491,17 @@ function BillCard({ bill, setModal, data }) {
 
   return (
     <div style={styles.billCard} onClick={() => setModal({ type: 'bill', payload: bill })}>
-      <div>
-        <div style={{ fontWeight: 500, fontSize: 14, color: t.text }}>{bill.name || 'Untitled'}</div>
-        <div style={{ fontSize: 11, color: t.textFaint, marginTop: 2 }}>
-          {dateLabel} · {acc?.name || 'no account'}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+        {isHouseholdBill && (
+          <Home size={13} style={{ color: t.secondary, flexShrink: 0 }} title="Household bill" />
+        )}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 500, fontSize: 14, color: t.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {bill.name || 'Untitled'}
+          </div>
+          <div style={{ fontSize: 11, color: t.textFaint, marginTop: 2 }}>
+            {dateLabel} · {acc?.name || 'no account'}
+          </div>
         </div>
       </div>
       <Money value={bill.amount} sign="-" color={t.text} size={17} />

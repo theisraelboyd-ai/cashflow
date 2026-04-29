@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Eye, EyeOff } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, EyeOff, Home as HomeIcon } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { startOfMonth, endOfMonth, addMonths, monthLongLabel, dateKey, sameDay, fmtShort, dayLabel, fmt } from '../lib/format.js';
 import { generateEvents } from '../lib/projection.js';
@@ -160,6 +160,7 @@ export function CalendarPage({ data, setModal }) {
           events={selectedEvents}
           isWorking={selectedIsWorking}
           workingJobs={selectedWorkingJobs}
+          accounts={data.accounts}
           setModal={setModal}
         />
       )}
@@ -370,7 +371,7 @@ function consolidateTransfers(events) {
   return consolidated;
 }
 
-function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
+function DayDetail({ day, events, isWorking, workingJobs, accounts, setModal }) {
   const { t, privacy } = useTheme();
 
   const total = events.reduce((s, e) => {
@@ -496,6 +497,8 @@ function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
               );
             }
             // Normal event row
+            const acc = accounts && ev.accountId ? accounts.find((a) => a.id === ev.accountId) : null;
+            const isHouseholdBill = ev.type === 'bill' && acc && (acc.ownerId === 'household' || !acc.ownerId);
             return (
               <div
                 key={i}
@@ -510,7 +513,12 @@ function DayDetail({ day, events, isWorking, workingJobs, setModal }) {
                   borderRadius: 6,
                 }}
               >
-                <span style={{ color: t.text, fontSize: 14, fontWeight: 500 }}>{ev.label}</span>
+                <span style={{ color: t.text, fontSize: 14, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {isHouseholdBill && (
+                    <HomeIcon size={11} style={{ color: t.secondary, opacity: 0.85, flexShrink: 0 }} />
+                  )}
+                  {ev.label}
+                </span>
                 <Money
                   value={ev.amount}
                   sign={ev.amount > 0 ? '+' : '-'}
