@@ -4,31 +4,40 @@ import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, greeting, dayLabel, addDays } from '../lib/format.js';
 import { generateEvents, projectBalances } from '../lib/projection.js';
 import { buildJobTaxLedger } from '../lib/tax.js';
-import { Money } from './atoms.jsx';
+import { applyViewFilter } from '../lib/viewFilter.js';
+import { Money, ViewingAsSwitch } from './atoms.jsx';
 
 export function Home({ data, setPage, setModal }) {
-  const { styles, t, privacy, togglePrivacy } = useTheme();
-  const totalLiquid = data.accounts.reduce((s, a) => s + Number(a.balance), 0);
+  const { styles, t, privacy, togglePrivacy, viewingAs } = useTheme();
+
+  // Apply view filter for displayed data
+  const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
+  const totalLiquid = viewData.accounts.reduce((s, a) => s + Number(a.balance), 0);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const horizon = addDays(today, 30);
 
   const projection = useMemo(
-    () => projectBalances(data, today, horizon, { includeSpeculative: false, likelyWeight: 0.75 }),
-    [data]
+    () => projectBalances(viewData, today, horizon, { includeSpeculative: false, likelyWeight: 0.75 }),
+    [viewData]
   );
   const projectedTotal = projection.dayPoints[projection.dayPoints.length - 1]?.total || totalLiquid;
   const firstNegative = projection.dayPoints.find((p) => p.total < 0);
+
+  // Greeting becomes personalised when viewing as an earner
+  const earnerView = data.earners.find((e) => e.id === viewingAs);
+  const greetingLine = earnerView ? `${greeting()}, ${earnerView.name}` : greeting();
 
   return (
     <div style={styles.page}>
       <div style={styles.header}>
         <div>
-          <div style={styles.headerEyebrow}>{greeting()}</div>
+          <div style={styles.headerEyebrow}>{greetingLine}</div>
           <h1 style={styles.headerTitle}>Cash flow</h1>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <ViewingAsSwitch earners={data.earners} />
           <button style={styles.iconBtn} onClick={togglePrivacy}>
             {privacy ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
@@ -39,7 +48,9 @@ export function Home({ data, setPage, setModal }) {
       </div>
 
       <div style={styles.heroCard} onClick={() => setPage('budget')}>
-        <div style={styles.heroLabel}>Total liquid</div>
+        <div style={styles.heroLabel}>
+          {viewingAs === 'household' ? 'Total liquid' : `${earnerView?.name || ''} + household`}
+        </div>
         <div className={privacy ? 'private-blur' : ''} style={styles.heroAmount}>{fmt(totalLiquid)}</div>
         <div style={styles.heroFoot}>
           <span style={{ opacity: 0.7 }}>30 days from now</span>
@@ -69,7 +80,7 @@ export function Home({ data, setPage, setModal }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {data.accounts.map((acc) => (
+        {viewData.accounts.map((acc) => (
           <AccountRow key={acc.id} acc={acc} setModal={setModal} data={data} />
         ))}
       </div>
@@ -82,18 +93,18 @@ export function Home({ data, setPage, setModal }) {
         <QuickCard
           icon={<Briefcase size={18} />}
           label="Work"
-          value={fmt(data.jobs.filter((j) => j.confidence !== 'speculative').reduce((s, j) => {
-            const ledger = buildJobTaxLedger(data.jobs, data.salaries);
+          value={fmt(viewData.jobs.filter((j) => j.confidence !== 'speculative').reduce((s, j) => {
+            const ledger = buildJobTaxLedger(viewData.jobs, viewData.salaries);
             return s + (ledger.get(j.id)?.net || 0);
           }, 0))}
-          sub={`${data.jobs.length} jobs · ${(data.salaries || []).length} salaries`}
+          sub={`${viewData.jobs.length} jobs · ${(viewData.salaries || []).length} salaries`}
           onClick={() => setPage('activity')}
         />
         <QuickCard
           icon={<Receipt size={18} />}
           label="Monthly bills"
-          value={fmt(data.bills.filter((b) => b.frequency === 'monthly').reduce((s, b) => s + Number(b.amount), 0))}
-          sub={`${data.bills.length} bills`}
+          value={fmt(viewData.bills.filter((b) => b.frequency === 'monthly').reduce((s, b) => s + Number(b.amount), 0))}
+          sub={`${viewData.bills.length} bills`}
           onClick={() => setPage('activity')}
         />
         <QuickCard
@@ -107,7 +118,7 @@ export function Home({ data, setPage, setModal }) {
         <QuickCard
           icon={<Coins size={18} />}
           label="Net worth"
-          value={fmt(totalLiquid + data.assets.reduce((s, a) => s + Number(a.value), 0))}
+          value={fmt(totalLiquid + (data.assets || []).reduce((s, a) => s + Number(a.value), 0))}
           sub="incl. assets"
           onClick={() => setPage('wealth')}
         />

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTheme } from '../lib/ThemeContext.jsx';
-import { fmt, fmtShort, dayLabel, dateKey, monthLabel, startOfMonth } from '../lib/format.js';
+import { fmt, fmtShort, dayLabel, dateKey, monthLabel } from '../lib/format.js';
 
 const FLOOR = -3000;
 
@@ -9,7 +9,6 @@ export function TrajectoryChart({ dayPoints, events }) {
   const [hoverIdx, setHoverIdx] = useState(null);
   const svgRef = useRef(null);
 
-  // Map events to days for tooltip detail
   const eventsByDayKey = useMemo(() => {
     const map = new Map();
     events.forEach((ev) => {
@@ -22,23 +21,19 @@ export function TrajectoryChart({ dayPoints, events }) {
 
   if (!dayPoints || dayPoints.length === 0) return null;
 
-  // SVG geometry
   const W = 320;
   const H = 200;
   const padTop = 14;
   const padBottom = 22;
   const padX = 10;
 
-  // X scale across days
   const xDay = (i) =>
     padX + (i / Math.max(1, dayPoints.length - 1)) * (W - padX * 2);
 
-  // Y scale on balance (with floor)
   const totals = dayPoints.map((p) => p.total);
   const maxBalance = Math.max(...totals, 100);
   const minBalance = Math.min(...totals, 0);
 
-  // Provide some headroom and add floor when going negative
   let yMin = Math.min(minBalance, 0);
   let yMax = maxBalance;
   if (yMax - yMin < 100) yMax = yMin + 100;
@@ -60,7 +55,7 @@ export function TrajectoryChart({ dayPoints, events }) {
 
   const firstNegativeIdx = dayPoints.findIndex((p) => p.total < 0);
 
-  // Month boundary lines for visual rhythm
+  // Month boundaries with collision avoidance for the leading-month label
   const monthBoundaries = useMemo(() => {
     const boundaries = [];
     let lastMonth = null;
@@ -74,43 +69,45 @@ export function TrajectoryChart({ dayPoints, events }) {
     return boundaries;
   }, [dayPoints]);
 
-  // Bill markers - one dot per day with bill activity
+  // Suppress the left-edge "first month" label if a month boundary falls within
+  // the first 12% of the chart width (would collide visually).
+  const showFirstMonthLabel = monthBoundaries.length === 0 || monthBoundaries[0].idx > dayPoints.length * 0.12;
+
+  // Bills + income marker positions, with a hit-test list for snap-to-event
   const billDays = useMemo(() => {
-    const set = new Map();
+    const dayMap = new Map();
     events.forEach((ev) => {
       if (ev.type !== 'bill' && ev.type !== 'transfer-out') return;
       const k = dateKey(ev.date);
-      if (!set.has(k)) set.set(k, { date: ev.date, items: [], total: 0 });
-      const entry = set.get(k);
+      if (!dayMap.has(k)) dayMap.set(k, { items: [], total: 0 });
+      const entry = dayMap.get(k);
       entry.items.push(ev);
       entry.total += Math.abs(ev.amount);
     });
-    // Map to indices
     const result = [];
     dayPoints.forEach((p, i) => {
       const k = dateKey(p.date);
-      const entry = set.get(k);
-      if (entry) result.push({ idx: i, ...entry });
+      const entry = dayMap.get(k);
+      if (entry) result.push({ idx: i, x: xDay(i), y: y(p.total), ...entry });
     });
     return result;
   }, [events, dayPoints]);
 
-  // Income markers
   const incomeDays = useMemo(() => {
-    const set = new Map();
+    const dayMap = new Map();
     events.forEach((ev) => {
       if (ev.type !== 'job' && ev.type !== 'salary' && ev.type !== 'extincome' && ev.type !== 'transfer-in') return;
       const k = dateKey(ev.date);
-      if (!set.has(k)) set.set(k, { date: ev.date, items: [], total: 0 });
-      const entry = set.get(k);
+      if (!dayMap.has(k)) dayMap.set(k, { items: [], total: 0 });
+      const entry = dayMap.get(k);
       entry.items.push(ev);
       entry.total += ev.amount;
     });
     const result = [];
     dayPoints.forEach((p, i) => {
       const k = dateKey(p.date);
-      const entry = set.get(k);
-      if (entry) result.push({ idx: i, ...entry });
+      const entry = dayMap.get(k);
+      if (entry) result.push({ idx: i, x: xDay(i), y: y(p.total), ...entry });
     });
     return result;
   }, [events, dayPoints]);
@@ -118,49 +115,92 @@ export function TrajectoryChart({ dayPoints, events }) {
   const hoveredPoint = hoverIdx !== null ? dayPoints[hoverIdx] : null;
   const hoveredDayEvents = hoveredPoint ? eventsByDayKey.get(dateKey(hoveredPoint.date)) || [] : [];
 
-  // Touch/mouse handlers - extract from event coords
-  const setIdxFromClientX = (clientX) => {
-    if (!svgRef.current) return;
+  // Convert client X to chart-space X (in viewBox units)
+  const clientXToSvgX = (clientX) => {
+    if (!svgRef.current) return 0;
     const rect = svgRef.current.getBoundingClientRect();
-    const px = ((clientX - rect.left) / rect.width) * W;
-    const i = Math.round(((px - padX) / (W - padX * 2)) * (dayPoints.length - 1));
-    if (i >= 0 && i < dayPoints.length) setHoverIdx(i);
+    return ((clientX - rect.left) / rect.width) * W;
   };
 
-  const handlePointerDown = (e) => {
-    e.preventDefault();
-    setIdxFromClientX(e.clientX);
-  };
-  const handlePointerMove = (e) => {
-    if (e.buttons === 0 && e.pointerType === 'mouse') {
-      setIdxFromClientX(e.clientX);
-    } else {
-      setIdxFromClientX(e.clientX);
+  // Snap-to-event: if within 14 SVG units of a marker, lock onto that day.
+  // Otherwise, lock to the nearest day on the line.
+  const SNAP_RADIUS = 14;
+
+  const findIdxFromX = (svgX) => {
+    // First check event markers (bills + income) - these have priority
+    let bestEventIdx = -1;
+    let bestEventDist = Infinity;
+    [...billDays, ...incomeDays].forEach((m) => {
+      const d = Math.abs(m.x - svgX);
+      if (d < bestEventDist) {
+        bestEventDist = d;
+        bestEventIdx = m.idx;
+      }
+    });
+    if (bestEventIdx >= 0 && bestEventDist <= SNAP_RADIUS) {
+      return bestEventIdx;
     }
+    // Otherwise, use the nearest day index
+    const i = Math.round(((svgX - padX) / (W - padX * 2)) * (dayPoints.length - 1));
+    return Math.max(0, Math.min(dayPoints.length - 1, i));
   };
-  const handlePointerLeave = () => setHoverIdx(null);
 
-  // Touch handling separately for mobile
+  const setIdxFromClientX = (clientX) => {
+    const svgX = clientXToSvgX(clientX);
+    const i = findIdxFromX(svgX);
+    setHoverIdx(i);
+  };
+
+  // Touch and mouse handling separated. Touch events get full priority on
+  // mobile (Pointer Events on iOS Safari are unreliable inside SVG).
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    const onTouch = (e) => {
+
+    let isTouching = false;
+
+    const onTouchStart = (e) => {
       e.preventDefault();
-      const t = e.touches[0] || e.changedTouches[0];
-      if (t) setIdxFromClientX(t.clientX);
+      isTouching = true;
+      const touch = e.touches[0];
+      if (touch) setIdxFromClientX(touch.clientX);
     };
-    const onTouchEnd = () => setHoverIdx(null);
-    svg.addEventListener('touchstart', onTouch, { passive: false });
-    svg.addEventListener('touchmove', onTouch, { passive: false });
+    const onTouchMove = (e) => {
+      if (!isTouching) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      if (touch) setIdxFromClientX(touch.clientX);
+    };
+    const onTouchEnd = () => {
+      isTouching = false;
+      setHoverIdx(null);
+    };
+
+    const onMouseMove = (e) => {
+      if (isTouching) return;
+      setIdxFromClientX(e.clientX);
+    };
+    const onMouseLeave = () => {
+      if (isTouching) return;
+      setHoverIdx(null);
+    };
+
+    svg.addEventListener('touchstart', onTouchStart, { passive: false });
+    svg.addEventListener('touchmove', onTouchMove, { passive: false });
     svg.addEventListener('touchend', onTouchEnd);
     svg.addEventListener('touchcancel', onTouchEnd);
+    svg.addEventListener('mousemove', onMouseMove);
+    svg.addEventListener('mouseleave', onMouseLeave);
+
     return () => {
-      svg.removeEventListener('touchstart', onTouch);
-      svg.removeEventListener('touchmove', onTouch);
+      svg.removeEventListener('touchstart', onTouchStart);
+      svg.removeEventListener('touchmove', onTouchMove);
       svg.removeEventListener('touchend', onTouchEnd);
       svg.removeEventListener('touchcancel', onTouchEnd);
+      svg.removeEventListener('mousemove', onMouseMove);
+      svg.removeEventListener('mouseleave', onMouseLeave);
     };
-  }, [dayPoints.length]);
+  }, [dayPoints.length, billDays.length, incomeDays.length]);
 
   return (
     <div
@@ -193,22 +233,14 @@ export function TrajectoryChart({ dayPoints, events }) {
           WebkitUserSelect: 'none',
           userSelect: 'none',
         }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerLeave={handlePointerLeave}
       >
         <defs>
           <linearGradient id="gradPos" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor={t.accent} stopOpacity="0.32" />
             <stop offset="100%" stopColor={t.accent} stopOpacity="0" />
           </linearGradient>
-          <linearGradient id="gradNeg" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={t.expense} stopOpacity="0" />
-            <stop offset="100%" stopColor={t.expense} stopOpacity="0.22" />
-          </linearGradient>
         </defs>
 
-        {/* Month boundary verticals */}
         {monthBoundaries.map((b, i) => (
           <g key={i}>
             <line
@@ -233,19 +265,19 @@ export function TrajectoryChart({ dayPoints, events }) {
           </g>
         ))}
 
-        {/* First-month label */}
-        <text
-          x={padX + 2}
-          y={H - padBottom + 13}
-          fontSize="9"
-          fill={t.textFaint}
-          fontWeight="600"
-          letterSpacing="0.5"
-        >
-          {monthLabel(dayPoints[0].date)}
-        </text>
+        {showFirstMonthLabel && (
+          <text
+            x={padX + 2}
+            y={H - padBottom + 13}
+            fontSize="9"
+            fill={t.textFaint}
+            fontWeight="600"
+            letterSpacing="0.5"
+          >
+            {monthLabel(dayPoints[0].date)}
+          </text>
+        )}
 
-        {/* Zero baseline */}
         {yZero > padTop && yZero < H - padBottom && (
           <line
             x1={padX}
@@ -259,10 +291,8 @@ export function TrajectoryChart({ dayPoints, events }) {
           />
         )}
 
-        {/* Fill - green above zero, red below */}
         <path d={fillPath} fill="url(#gradPos)" />
 
-        {/* Line */}
         <path
           d={linePath}
           fill="none"
@@ -272,32 +302,29 @@ export function TrajectoryChart({ dayPoints, events }) {
           strokeLinecap="round"
         />
 
-        {/* Bill activity dots - small, on the line */}
         {billDays.map((bd, i) => (
           <circle
             key={`b-${i}`}
-            cx={xDay(bd.idx)}
-            cy={y(dayPoints[bd.idx].total)}
-            r="2.5"
+            cx={bd.x}
+            cy={bd.y}
+            r="2.8"
             fill={t.expense}
-            opacity="0.8"
+            opacity="0.9"
           />
         ))}
 
-        {/* Income dots */}
         {incomeDays.map((id, i) => (
           <circle
             key={`i-${i}`}
-            cx={xDay(id.idx)}
-            cy={y(dayPoints[id.idx].total)}
-            r="3"
+            cx={id.x}
+            cy={id.y}
+            r="3.5"
             fill={t.income}
             stroke={t.bg}
-            strokeWidth="1"
+            strokeWidth="1.2"
           />
         ))}
 
-        {/* Negative crossing marker */}
         {firstNegativeIdx > 0 && (
           <g>
             <circle
@@ -323,7 +350,6 @@ export function TrajectoryChart({ dayPoints, events }) {
           </g>
         )}
 
-        {/* Hover crosshair */}
         {hoverIdx !== null && (
           <g>
             <line
@@ -338,7 +364,7 @@ export function TrajectoryChart({ dayPoints, events }) {
             <circle
               cx={xDay(hoverIdx)}
               cy={y(dayPoints[hoverIdx].total)}
-              r="4.5"
+              r="5"
               fill={t.accent}
               stroke={t.bg}
               strokeWidth="2"
@@ -347,7 +373,6 @@ export function TrajectoryChart({ dayPoints, events }) {
         )}
       </svg>
 
-      {/* Tooltip area */}
       <div
         style={{
           marginTop: 10,
@@ -378,7 +403,7 @@ export function TrajectoryChart({ dayPoints, events }) {
             </div>
             {hoveredDayEvents.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
-                {hoveredDayEvents.slice(0, 3).map((ev, i) => (
+                {hoveredDayEvents.slice(0, 4).map((ev, i) => (
                   <div
                     key={i}
                     style={{
@@ -402,9 +427,9 @@ export function TrajectoryChart({ dayPoints, events }) {
                     </span>
                   </div>
                 ))}
-                {hoveredDayEvents.length > 3 && (
+                {hoveredDayEvents.length > 4 && (
                   <div style={{ fontSize: 10, color: t.textFaint, fontStyle: 'italic' }}>
-                    + {hoveredDayEvents.length - 3} more
+                    + {hoveredDayEvents.length - 4} more
                   </div>
                 )}
               </div>

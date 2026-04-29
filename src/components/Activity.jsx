@@ -12,11 +12,15 @@ import {
   CLASS_2_ANNUAL,
   DEFAULT_EARNER_ID,
 } from '../lib/tax.js';
-import { PageHeader, SummaryCell, Empty, Toggle, AddButton, Money } from './atoms.jsx';
+import { applyViewFilter } from '../lib/viewFilter.js';
+import { PageHeader, SummaryCell, Empty, Toggle, AddButton, Money, ViewingAsSwitch } from './atoms.jsx';
 
 export function Activity({ data, setModal }) {
-  const { styles } = useTheme();
+  const { styles, viewingAs } = useTheme();
   const [tab, setTab] = useState('work');
+
+  // Filtered view of data for what's displayed
+  const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
 
   const onAdd = () => {
     if (tab === 'work') {
@@ -31,6 +35,7 @@ export function Activity({ data, setModal }) {
       <PageHeader
         title="Activity"
         eyebrow="Work & Bills"
+        right={<ViewingAsSwitch earners={data.earners} />}
         action={<AddButton onClick={onAdd} />}
       />
 
@@ -39,26 +44,28 @@ export function Activity({ data, setModal }) {
         <Toggle active={tab === 'bills'} onClick={() => setTab('bills')}>Bills & Transfers</Toggle>
       </div>
 
-      {tab === 'work' ? <WorkContent data={data} setModal={setModal} /> : <BillsContent data={data} setModal={setModal} />}
+      {tab === 'work'
+        ? <WorkContent data={data} viewData={viewData} setModal={setModal} />
+        : <BillsContent data={data} viewData={viewData} setModal={setModal} />}
     </div>
   );
 }
 
-function WorkContent({ data, setModal }) {
+function WorkContent({ data, viewData, setModal }) {
   const { styles, t } = useTheme();
-  const ledger = useMemo(() => buildJobTaxLedger(data.jobs, data.salaries), [data.jobs, data.salaries]);
+  const ledger = useMemo(() => buildJobTaxLedger(viewData.jobs, viewData.salaries), [viewData.jobs, viewData.salaries]);
 
   const sumNet = (jobs) => jobs.reduce((s, j) => s + (ledger.get(j.id)?.net || 0), 0);
-  const confirmed = data.jobs.filter((j) => j.confidence === 'confirmed');
-  const likely = data.jobs.filter((j) => j.confidence === 'likely');
-  const speculative = data.jobs.filter((j) => j.confidence === 'speculative');
+  const confirmed = viewData.jobs.filter((j) => j.confidence === 'confirmed');
+  const likely = viewData.jobs.filter((j) => j.confidence === 'likely');
+  const speculative = viewData.jobs.filter((j) => j.confidence === 'speculative');
 
   const tyStart = getTaxYearStart(new Date());
 
   // Group jobs by month of pay date
   const groupedByMonth = useMemo(() => {
     const map = new Map();
-    [...data.jobs]
+    [...viewData.jobs]
       .sort((a, b) => jobPayDate(a) - jobPayDate(b))
       .forEach((j) => {
         const d = jobPayDate(j);
@@ -67,7 +74,10 @@ function WorkContent({ data, setModal }) {
         map.get(key).push(j);
       });
     return map;
-  }, [data.jobs]);
+  }, [viewData.jobs]);
+
+  // Tax cards always show both earners — viewing as someone shouldn't hide the household tax picture
+  const taxEarnersToShow = data.earners;
 
   return (
     <div>
@@ -77,15 +87,15 @@ function WorkContent({ data, setModal }) {
         <SummaryCell label="Speculative" value={fmt(sumNet(speculative))} accent={t.textFaint} />
       </div>
 
-      {/* Per-earner tax-year cards */}
+      {/* Per-earner tax-year cards - always full data */}
       <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {data.earners.map((earner) => (
+        {taxEarnersToShow.map((earner) => (
           <TaxYearCard key={earner.id} earner={earner} data={data} />
         ))}
       </div>
 
       {/* Salaries section */}
-      {(data.salaries || []).length > 0 && (
+      {(viewData.salaries || []).length > 0 && (
         <div style={{ marginTop: 22 }}>
           <div style={styles.sectionHead}>
             <h2 style={styles.h2}>Salaries</h2>
@@ -94,7 +104,7 @@ function WorkContent({ data, setModal }) {
             </button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {data.salaries.map((s) => (
+            {viewData.salaries.map((s) => (
               <SalaryCard key={s.id} salary={s} setModal={setModal} data={data} />
             ))}
           </div>
@@ -102,7 +112,7 @@ function WorkContent({ data, setModal }) {
       )}
 
       {/* Jobs grouped by month */}
-      {data.jobs.length === 0 && (
+      {viewData.jobs.length === 0 && (
         <div style={{ marginTop: 22 }}>
           <Empty msg={`No jobs yet. Tap + to add a freelance job or salary.`} />
         </div>
@@ -120,7 +130,7 @@ function WorkContent({ data, setModal }) {
       ))}
 
       {/* Add Salary CTA if none exist */}
-      {(data.salaries || []).length === 0 && (
+      {(viewData.salaries || []).length === 0 && (
         <div style={{ marginTop: 18 }}>
           <button
             onClick={() => setModal({ type: 'salary', payload: null })}
@@ -298,12 +308,12 @@ function JobCard({ job, setModal, data, ledger }) {
   );
 }
 
-function BillsContent({ data, setModal }) {
+function BillsContent({ data, viewData, setModal }) {
   const { styles, t } = useTheme();
-  const monthly = data.bills.filter((b) => b.frequency === 'monthly');
-  const weekly = data.bills.filter((b) => b.frequency === 'weekly');
-  const oneoff = data.bills.filter((b) => b.frequency === 'oneoff');
-  const yearly = data.bills.filter((b) => b.frequency === 'yearly');
+  const monthly = viewData.bills.filter((b) => b.frequency === 'monthly');
+  const weekly = viewData.bills.filter((b) => b.frequency === 'weekly');
+  const oneoff = viewData.bills.filter((b) => b.frequency === 'oneoff');
+  const yearly = viewData.bills.filter((b) => b.frequency === 'yearly');
 
   const totalMonthly = monthly.reduce((s, b) => s + Number(b.amount), 0);
   const totalAnnualised =
@@ -347,9 +357,9 @@ function BillsContent({ data, setModal }) {
             <Plus size={16} />
           </button>
         </div>
-        {data.externalIncome.length === 0 && <Empty msg="e.g. partner contributions" small />}
+        {viewData.externalIncome.length === 0 && <Empty msg="e.g. partner contributions" small />}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {data.externalIncome.map((e) => <ExtIncomeCard key={e.id} item={e} setModal={setModal} data={data} />)}
+          {viewData.externalIncome.map((e) => <ExtIncomeCard key={e.id} item={e} setModal={setModal} data={data} />)}
         </div>
       </div>
 

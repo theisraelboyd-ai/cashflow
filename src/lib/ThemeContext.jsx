@@ -52,6 +52,8 @@ export function ThemeProvider({ children }) {
     togglePrivacy: () => updateSettings({ privacy: !settings.privacy }),
     setTheme: (theme) => updateSettings({ theme }),
     setTextScale: (textScale) => updateSettings({ textScale }),
+    viewingAs: settings.viewingAs || 'household',
+    setViewingAs: (viewingAs) => updateSettings({ viewingAs }),
   };
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

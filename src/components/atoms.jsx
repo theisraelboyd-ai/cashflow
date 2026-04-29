@@ -189,3 +189,82 @@ export function AddButton({ onClick }) {
     </button>
   );
 }
+
+// Owner picker - earners + Household option
+export function OwnerSelector({ value, onChange, earners }) {
+  const { styles } = useTheme();
+  return (
+    <div style={{ ...styles.segGroup, flexWrap: 'wrap' }}>
+      <Seg active={value === 'household'} onClick={() => onChange('household')}>
+        Household
+      </Seg>
+      {earners.map((e) => (
+        <Seg key={e.id} active={value === e.id} onClick={() => onChange(e.id)}>
+          {e.name}
+        </Seg>
+      ))}
+    </div>
+  );
+}
+
+// Top-bar "viewing as" switcher
+export function ViewingAsSwitch({ earners }) {
+  const { t, viewingAs, setViewingAs } = useTheme();
+
+  // Don't render if there's only one earner (no point having a switcher)
+  if (!earners || earners.length < 2) return null;
+
+  const options = [
+    { id: 'household', label: 'All', initial: 'A' },
+    ...earners.map((e) => ({ id: e.id, label: e.name, initial: (e.name || '?')[0].toUpperCase() })),
+  ];
+
+  const cycle = () => {
+    const idx = options.findIndex((o) => o.id === viewingAs);
+    const next = options[(idx + 1) % options.length];
+    setViewingAs(next.id);
+  };
+
+  const current = options.find((o) => o.id === viewingAs) || options[0];
+
+  return (
+    <button
+      onClick={cycle}
+      style={{
+        height: 32,
+        padding: '0 12px',
+        borderRadius: 16,
+        border: `1px solid ${t.accent}`,
+        background: t.accentSoft,
+        color: t.accent,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: 11,
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+      }}
+      title="Tap to switch view"
+    >
+      <span
+        style={{
+          width: 18,
+          height: 18,
+          borderRadius: 9,
+          background: t.accent,
+          color: t.bg,
+          fontSize: 10,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontWeight: 700,
+        }}
+      >
+        {current.initial}
+      </span>
+      {current.label}
+    </button>
+  );
+}

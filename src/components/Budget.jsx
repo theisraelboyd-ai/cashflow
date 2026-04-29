@@ -2,25 +2,50 @@ import React, { useState, useMemo } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, monthLabel, startOfMonth, endOfMonth, addMonths, dayLabel, dateKey } from '../lib/format.js';
-import { projectBalances } from '../lib/projection.js';
-import { PageHeader, Toggle, Money } from './atoms.jsx';
+import { projectBalances, generateEvents } from '../lib/projection.js';
+import { applyViewFilter } from '../lib/viewFilter.js';
+import { PageHeader, Toggle, Money, ViewingAsSwitch } from './atoms.jsx';
 import { TrajectoryChart } from './TrajectoryChart.jsx';
 
 export function Budget({ data }) {
-  const { styles, t, privacy } = useTheme();
+  const { styles, t, privacy, viewingAs } = useTheme();
   const [horizon, setHorizon] = useState(3);
   const [mode, setMode] = useState('realistic');
 
+  const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const endDate = endOfMonth(addMonths(today, horizon - 1));
+
+  // Always start projection at the beginning of the current month, regardless of horizon.
+  // This way 1m view shows the full current month even if today is the 29th.
+  const projStart = startOfMonth(today);
+  const endDate = endOfMonth(addMonths(projStart, horizon - 1));
 
   const projection = useMemo(() => {
     const opts = mode === 'realistic'
       ? { includeSpeculative: false, likelyWeight: 0.75 }
       : { includeSpeculative: true, likelyWeight: 1.0 };
-    return projectBalances(data, today, endDate, opts);
-  }, [data, horizon, mode]);
+
+    // We need to back-calculate the balance as of projStart.
+    // Current account balances are "as of today". To get "as of projStart",
+    // reverse-apply all events between projStart and today.
+    const monthEventsToToday = generateEvents(viewData, projStart, today, opts);
+    const adjustedData = {
+      ...viewData,
+      accounts: viewData.accounts.map((a) => {
+        let bal = Number(a.balance);
+        monthEventsToToday.forEach((ev) => {
+          if (ev.accountId === a.id && ev.date <= today) {
+            bal -= ev.amount;  // reverse the event
+          }
+        });
+        return { ...a, balance: bal };
+      }),
+    };
+
+    return projectBalances(adjustedData, projStart, endDate, opts);
+  }, [viewData, horizon, mode]);
 
   const { dayPoints, events } = projection;
   const startTotal = dayPoints[0]?.total || 0;
@@ -30,8 +55,8 @@ export function Budget({ data }) {
   const monthSummary = useMemo(() => {
     const months = [];
     for (let i = 0; i < horizon; i++) {
-      const mStart = i === 0 ? today : startOfMonth(addMonths(today, i));
-      const mEnd = endOfMonth(addMonths(today, i));
+      const mStart = startOfMonth(addMonths(projStart, i));
+      const mEnd = endOfMonth(addMonths(projStart, i));
       const monthEvents = events.filter((ev) => ev.date >= mStart && ev.date <= mEnd);
       const income = monthEvents.filter((e) => e.amount > 0 && e.type !== 'transfer-in').reduce((s, e) => s + e.amount, 0);
       const outgoings = monthEvents.filter((e) => e.amount < 0 && e.type !== 'transfer-out').reduce((s, e) => s + Math.abs(e.amount), 0);
@@ -47,11 +72,11 @@ export function Budget({ data }) {
       });
     }
     return months;
-  }, [events, dayPoints, horizon, today]);
+  }, [events, dayPoints, horizon, projStart]);
 
   return (
     <div style={styles.page}>
-      <PageHeader title="Budget" eyebrow="Cash flow projection" />
+      <PageHeader title="Budget" eyebrow="Cash flow projection" right={<ViewingAsSwitch earners={data.earners} />} />
 
       <div style={styles.toggleRow}>
         <Toggle active={mode === 'realistic'} onClick={() => setMode('realistic')}>Realistic</Toggle>

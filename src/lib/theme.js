@@ -85,15 +85,16 @@ export const SETTINGS_KEY = 'cashflow_settings_v3';
 export function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { theme: 'auto', privacy: false, textScale: 1 };
+    if (!raw) return { theme: 'auto', privacy: false, textScale: 1, viewingAs: 'household' };
     const parsed = JSON.parse(raw);
     return {
       theme: parsed.theme || 'auto',
       privacy: !!parsed.privacy,
       textScale: parsed.textScale || 1,
+      viewingAs: parsed.viewingAs || 'household',
     };
   } catch {
-    return { theme: 'auto', privacy: false, textScale: 1 };
+    return { theme: 'auto', privacy: false, textScale: 1, viewingAs: 'household' };
   }
 }
 

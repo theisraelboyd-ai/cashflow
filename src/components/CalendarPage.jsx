@@ -3,12 +3,13 @@ import { ChevronLeft, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { startOfMonth, endOfMonth, addMonths, monthLongLabel, dateKey, sameDay, fmtShort, dayLabel, fmt } from '../lib/format.js';
 import { generateEvents } from '../lib/projection.js';
-import { PageHeader, Money } from './atoms.jsx';
+import { applyViewFilter } from '../lib/viewFilter.js';
+import { PageHeader, Money, ViewingAsSwitch } from './atoms.jsx';
 
 const DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
 export function CalendarPage({ data, setModal }) {
-  const { styles, t, privacy, togglePrivacy } = useTheme();
+  const { styles, t, privacy, togglePrivacy, viewingAs } = useTheme();
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   const [selectedDay, setSelectedDay] = useState(() => {
     const d = new Date();
@@ -16,18 +17,20 @@ export function CalendarPage({ data, setModal }) {
     return d;
   });
 
+  const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
+
   const monthStart = startOfMonth(cursor);
   const monthEnd = endOfMonth(cursor);
 
   const events = useMemo(
-    () => generateEvents(data, monthStart, monthEnd, { includeSpeculative: true, likelyWeight: 1.0 }),
-    [data, cursor]
+    () => generateEvents(viewData, monthStart, monthEnd, { includeSpeculative: true, likelyWeight: 1.0 }),
+    [viewData, cursor]
   );
 
   // Working days
   const workDays = useMemo(() => {
     const set = new Set();
-    (data.jobs || []).forEach((job) => {
+    (viewData.jobs || []).forEach((job) => {
       if (!job.startDate) return;
       const s = new Date(job.startDate);
       const e = new Date(job.endDate || job.startDate);
@@ -41,7 +44,7 @@ export function CalendarPage({ data, setModal }) {
       }
     });
     return set;
-  }, [data.jobs, monthStart, monthEnd]);
+  }, [viewData.jobs, monthStart, monthEnd]);
 
   const eventsByDay = useMemo(() => {
     const map = new Map();
@@ -78,7 +81,7 @@ export function CalendarPage({ data, setModal }) {
 
   const selectedWorkingJobs = useMemo(() => {
     if (!selectedDay) return [];
-    return (data.jobs || []).filter((j) => {
+    return (viewData.jobs || []).filter((j) => {
       if (!j.startDate) return false;
       const s = new Date(j.startDate);
       s.setHours(0, 0, 0, 0);
@@ -86,17 +89,20 @@ export function CalendarPage({ data, setModal }) {
       e.setHours(23, 59, 59, 999);
       return selectedDay >= s && selectedDay <= e;
     });
-  }, [selectedDay, data.jobs]);
+  }, [selectedDay, viewData.jobs]);
 
   return (
     <div style={styles.page}>
       <PageHeader
-        title="Calendar"
-        eyebrow={monthLongLabel(cursor)}
+        title={monthLongLabel(cursor)}
+        eyebrow="Calendar"
         right={
-          <button style={styles.iconBtn} onClick={togglePrivacy} title="Toggle privacy">
-            {privacy ? <EyeOff size={16} /> : <Eye size={16} />}
-          </button>
+          <>
+            <ViewingAsSwitch earners={data.earners} />
+            <button style={styles.iconBtn} onClick={togglePrivacy} title="Toggle privacy">
+              {privacy ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </>
         }
         action={null}
       />

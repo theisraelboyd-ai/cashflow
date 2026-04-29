@@ -4,7 +4,7 @@ import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, uid, dayLabel, calendarDaysBetween, addDays } from '../lib/format.js';
 import { generateEvents } from '../lib/projection.js';
 import { previewJobTax, jobPayDate, calcAnnualHMRCTax, DEFAULT_EARNER_ID } from '../lib/tax.js';
-import { ModalHeader, Field, Seg } from './atoms.jsx';
+import { ModalHeader, Field, Seg, OwnerSelector } from './atoms.jsx';
 import { exportData, importDataFromFile, defaultData } from '../hooks/useStoredData.js';
 
 export function Modal({ modal, setModal, data, update, setData }) {
@@ -127,10 +127,14 @@ function ReconcileForm({ acc, data, update, close }) {
 }
 
 function AccountForm({ item, data, update, close }) {
-  const { styles, t } = useTheme();
+  const { styles, t, viewingAs } = useTheme();
   const [name, setName] = useState(item?.name || '');
   const [balance, setBalance] = useState(item?.balance ?? 0);
   const [colorIdx, setColorIdx] = useState(item?.colorIdx ?? 0);
+  // Default new account owner to the currently-viewed earner, falling back to household
+  const [ownerId, setOwnerId] = useState(
+    item?.ownerId || (viewingAs !== 'household' ? viewingAs : 'household')
+  );
 
   const submit = () => {
     update((d) => {
@@ -139,12 +143,14 @@ function AccountForm({ item, data, update, close }) {
         target.name = name;
         target.balance = Number(balance);
         target.colorIdx = colorIdx;
+        target.ownerId = ownerId;
       } else {
         d.accounts.push({
           id: uid(),
           name,
           balance: Number(balance),
           colorIdx,
+          ownerId,
           lastUpdated: new Date().toISOString(),
         });
       }
@@ -160,6 +166,8 @@ function AccountForm({ item, data, update, close }) {
     close();
   };
 
+  const showOwners = data.earners && data.earners.length > 0;
+
   return (
     <div>
       <ModalHeader title={item ? 'Edit account' : 'New account'} />
@@ -169,6 +177,11 @@ function AccountForm({ item, data, update, close }) {
       <Field label="Current balance">
         <input style={styles.input} type="number" step="0.01" value={balance} onChange={(e) => setBalance(e.target.value)} />
       </Field>
+      {showOwners && (
+        <Field label="Belongs to">
+          <OwnerSelector value={ownerId} onChange={setOwnerId} earners={data.earners} />
+        </Field>
+      )}
       <Field label="Colour">
         <div style={{ display: 'flex', gap: 8 }}>
           {t.accountColors.map((c, i) => (
@@ -595,7 +608,7 @@ function SalaryForm({ item, data, update, close }) {
 }
 
 function BillForm({ item, data, update, close }) {
-  const { styles } = useTheme();
+  const { styles, viewingAs } = useTheme();
   const [name, setName] = useState(item?.name || '');
   const [amount, setAmount] = useState(item?.amount ?? 0);
   const [frequency, setFrequency] = useState(item?.frequency || 'monthly');
@@ -603,9 +616,12 @@ function BillForm({ item, data, update, close }) {
   const [date, setDate] = useState(item?.date || new Date().toISOString().slice(0, 10));
   const [accountId, setAccountId] = useState(item?.accountId || data.accounts[0]?.id);
   const [category, setCategory] = useState(item?.category || '');
+  const [ownerId, setOwnerId] = useState(
+    item?.ownerId || (viewingAs !== 'household' ? viewingAs : 'household')
+  );
 
   const submit = () => {
-    const obj = { name, amount: Number(amount), frequency, dayOfMonth: Number(dayOfMonth), date, accountId, category };
+    const obj = { name, amount: Number(amount), frequency, dayOfMonth: Number(dayOfMonth), date, accountId, category, ownerId };
     update((d) => {
       if (item) {
         const idx = d.bills.findIndex((b) => b.id === item.id);
@@ -623,6 +639,8 @@ function BillForm({ item, data, update, close }) {
     close();
   };
 
+  const showOwners = data.earners && data.earners.length > 0;
+
   return (
     <div>
       <ModalHeader title={item ? 'Edit bill' : 'New bill'} />
@@ -632,6 +650,11 @@ function BillForm({ item, data, update, close }) {
       <Field label="Amount (£)">
         <input style={styles.input} type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
       </Field>
+      {showOwners && (
+        <Field label="Whose bill">
+          <OwnerSelector value={ownerId} onChange={setOwnerId} earners={data.earners} />
+        </Field>
+      )}
       <Field label="Frequency">
         <div style={styles.segGroup}>
           <Seg active={frequency === 'monthly'} onClick={() => setFrequency('monthly')}>Monthly</Seg>
