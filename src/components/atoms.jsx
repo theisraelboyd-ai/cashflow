@@ -107,7 +107,7 @@ export function Seg({ active, onClick, children }) {
   );
 }
 
-export function Toggle({ active, onClick, children, small }) {
+export function Toggle({ active, onClick, children, small, style }) {
   const { t } = useTheme();
   return (
     <button
@@ -124,6 +124,7 @@ export function Toggle({ active, onClick, children, small }) {
         cursor: 'pointer',
         fontWeight: 500,
         transition: 'all 0.15s',
+        ...style,
       }}
     >
       {children}

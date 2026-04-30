@@ -230,13 +230,16 @@ export function Budget({ data, setModal }) {
         }
       />
 
-      {/* Single combined row: realistic/optimistic + horizon picker */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, alignItems: 'center' }}>
-        <Toggle active={mode === 'realistic'} onClick={() => setMode('realistic')} small>Realistic</Toggle>
-        <Toggle active={mode === 'optimistic'} onClick={() => setMode('optimistic')} small>All planned</Toggle>
-        <span style={{ width: 1, height: 16, background: t.border, margin: '0 4px' }} />
+      {/* Mode toggle - 2 equal pills */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <Toggle active={mode === 'realistic'} onClick={() => setMode('realistic')} small style={{ flex: 1 }}>Realistic</Toggle>
+        <Toggle active={mode === 'optimistic'} onClick={() => setMode('optimistic')} small style={{ flex: 1 }}>All planned</Toggle>
+      </div>
+
+      {/* Horizon picker - 4 equal pills */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
         {[1, 3, 6, 12].map((n) => (
-          <Toggle key={n} active={horizon === n} onClick={() => setHorizon(n)} small>{n}m</Toggle>
+          <Toggle key={n} active={horizon === n} onClick={() => setHorizon(n)} small style={{ flex: 1 }}>{n}m</Toggle>
         ))}
       </div>
 

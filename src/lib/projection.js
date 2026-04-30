@@ -284,28 +284,41 @@ export function projectBalances(data, fromDate, toDate, options = {}) {
 
   const balances = {};
   (data.accounts || []).forEach((a) => {
-    balances[a.id] = Number(a.balance);
+    if (!a || !a.id) return;
+    const n = Number(a.balance);
+    balances[a.id] = Number.isFinite(n) ? n : 0;
   });
 
-  const events = generateEvents(data, start, end, options);
+  const events = generateEvents(data, start, end, options) || [];
 
   const dayPoints = [];
   const cursor = new Date(start);
   let eventIdx = 0;
 
-  while (cursor <= end) {
+  // Guard against pathological inputs (e.g. start > end, NaN dates)
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) {
+    return { dayPoints: [], events: [] };
+  }
+
+  // Hard cap iterations so we never hang
+  let iterations = 0;
+  const maxIterations = 366 * 5;  // 5 years of days max
+
+  while (cursor <= end && iterations < maxIterations) {
+    iterations++;
     const dayEnd = new Date(cursor);
     dayEnd.setHours(23, 59, 59, 999);
 
-    while (eventIdx < events.length && events[eventIdx].date <= dayEnd) {
+    while (eventIdx < events.length && events[eventIdx] && events[eventIdx].date <= dayEnd) {
       const ev = events[eventIdx];
-      if (balances[ev.accountId] !== undefined) {
-        balances[ev.accountId] += ev.amount;
+      const evAmt = Number(ev.amount);
+      if (Number.isFinite(evAmt) && balances[ev.accountId] !== undefined) {
+        balances[ev.accountId] += evAmt;
       }
       eventIdx++;
     }
 
-    const total = Object.values(balances).reduce((s, v) => s + v, 0);
+    const total = Object.values(balances).reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0);
     dayPoints.push({
       date: new Date(cursor),
       total,

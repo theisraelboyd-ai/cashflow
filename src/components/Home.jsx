@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Plus, AlertTriangle, Briefcase, Receipt, TrendingUp, Coins, Settings, Eye, EyeOff, Pencil, Home as HomeIcon } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
-import { fmt, greeting, dayLabel, addDays } from '../lib/format.js';
+import { fmt, fmtShort, greeting, dayLabel, addDays } from '../lib/format.js';
 import { generateEvents, projectBalances } from '../lib/projection.js';
 import { buildJobTaxLedger } from '../lib/tax.js';
 import { applyViewFilter, isHouseholdAccount } from '../lib/viewFilter.js';
@@ -254,7 +254,7 @@ function JointHealthCard({ health, sparklinePoints }) {
 
       {/* Sparkline showing 30-day household pot trajectory */}
       {sparklinePoints && sparklinePoints.length > 1 && (
-        <Sparkline points={sparklinePoints} />
+        <Sparkline points={sparklinePoints} privacy={privacy} />
       )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: t.textDim, paddingBottom: 6 }}>
@@ -399,51 +399,81 @@ function QuickCard({ icon, label, value, sub, onClick, noPrivacy }) {
 }
 
 // Tiny inline sparkline for the Joint health card.
-function Sparkline({ points }) {
+function Sparkline({ points, privacy }) {
   const { t } = useTheme();
   if (!points || points.length < 2) return null;
   const W = 280;
-  const H = 38;
-  const padX = 4;
+  const H = 56;  // taller — was 38, too cramped
+  const padX = 6;
+  const padY = 8;
 
   const values = points.map((p) => p.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const min = Math.min(...values, 0);  // include 0 in scale so we can show zero-line
+  const max = Math.max(...values, 0);
   const range = Math.max(1, max - min);
-  // Add 10% padding on top/bottom so endpoints aren't hugging the edges
-  const minP = min - range * 0.1;
-  const maxP = max + range * 0.1;
+  const minP = min - range * 0.08;
+  const maxP = max + range * 0.08;
   const yRange = Math.max(1, maxP - minP);
 
   const x = (i) => padX + (i / (points.length - 1)) * (W - padX * 2);
-  const y = (v) => 4 + (1 - (v - minP) / yRange) * (H - 8);
+  const y = (v) => padY + (1 - (v - minP) / yRange) * (H - padY * 2);
 
-  // Direction across the whole window
   const startVal = values[0];
   const endVal = values[values.length - 1];
-  const stroke = endVal >= startVal ? t.income : t.expense;
+  const delta = endVal - startVal;
+  const stroke = delta >= 0 ? t.income : t.expense;
 
   const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(p.value)}`).join(' ');
-  const fillPath = `${linePath} L ${x(points.length - 1)} ${H} L ${x(0)} ${H} Z`;
+  const fillPath = `${linePath} L ${x(points.length - 1)} ${H - padY} L ${x(0)} ${H - padY} Z`;
+
+  // Should we draw the zero-baseline? Only if it falls within the visible y-range
+  const zeroY = y(0);
+  const showZero = min < 0 || max < 0;  // chart actually crosses zero somewhere
 
   return (
-    <div style={{ marginBottom: 12, marginTop: -2 }}>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: 'block', height: 38 }}>
+    <div style={{ marginBottom: 10, marginTop: 4 }}>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: 'block', height: H, overflow: 'visible' }}>
         <defs>
           <linearGradient id="sparkFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={stroke} stopOpacity="0.15" />
-            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+            <stop offset="0%" stopColor={stroke} stopOpacity="0.18" />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0.02" />
           </linearGradient>
         </defs>
         <path d={fillPath} fill="url(#sparkFill)" />
-        <path d={linePath} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-        <circle cx={x(points.length - 1)} cy={y(endVal)} r="2.5" fill={stroke} />
+        {showZero && (
+          <line x1={padX} x2={W - padX} y1={zeroY} y2={zeroY} stroke={t.border} strokeWidth="0.8" strokeDasharray="2 3" opacity="0.7" />
+        )}
+        <path d={linePath} fill="none" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
+        {/* Start dot - subtle */}
+        <circle cx={x(0)} cy={y(startVal)} r="2" fill={t.bgElev} stroke={stroke} strokeWidth="1.2" />
+        {/* End dot - emphasised */}
+        <circle cx={x(points.length - 1)} cy={y(endVal)} r="3" fill={stroke} stroke={t.bgElev} strokeWidth="1.2" />
       </svg>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: t.textFaint, marginTop: 2, padding: '0 2px', letterSpacing: 0.5 }}>
-        <span>30 days</span>
-        <span style={{ color: stroke, fontWeight: 600 }}>
-          {endVal >= startVal ? '↑' : '↓'} £{Math.abs(endVal - startVal).toFixed(0)}
-        </span>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
+        fontSize: 10,
+        color: t.textFaint,
+        marginTop: 6,
+        padding: '0 2px',
+        letterSpacing: 0.3,
+      }}>
+        <div>
+          <span style={{ textTransform: 'uppercase', fontWeight: 600, marginRight: 4 }}>now</span>
+          <span style={{ color: t.textDim, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+            {fmtShort(startVal)}
+          </span>
+        </div>
+        <div style={{ color: stroke, fontWeight: 700, fontSize: 11 }} className={privacy ? 'private-blur' : ''}>
+          {delta >= 0 ? '+' : '−'}{fmtShort(Math.abs(delta))}
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <span style={{ textTransform: 'uppercase', fontWeight: 600, marginRight: 4 }}>30d</span>
+          <span style={{ color: t.textDim, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+            {fmtShort(endVal)}
+          </span>
+        </div>
       </div>
     </div>
   );

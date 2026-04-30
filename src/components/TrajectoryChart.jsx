@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, fmtShort, dayLabel, dateKey, monthLabel } from '../lib/format.js';
 
-export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], visibleAccountIds = null }) {
+export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accounts = [], visibleAccountIds = null }) {
   const { t, privacy, isDesktop } = useTheme();
   const W = isDesktop ? 800 : 320;
   const H = isDesktop ? 280 : 200;
@@ -183,8 +183,8 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
   // Bills + income marker positions, with a hit-test list for snap-to-event
   const billDaysRaw = useMemo(() => {
     const dayMap = new Map();
-    events.forEach((ev) => {
-      if (ev.type !== 'bill' && ev.type !== 'transfer-out') return;
+    (events || []).forEach((ev) => {
+      if (!ev || (ev.type !== 'bill' && ev.type !== 'transfer-out')) return;
       const k = dateKey(ev.date);
       if (!dayMap.has(k)) dayMap.set(k, { items: [], total: 0 });
       const entry = dayMap.get(k);
@@ -192,18 +192,19 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
       entry.total += Math.abs(ev.amount);
     });
     const result = [];
-    dayPoints.forEach((p, i) => {
+    safeDayPoints.forEach((p, i) => {
+      if (!p || !p.date) return;
       const k = dateKey(p.date);
       const entry = dayMap.get(k);
-      if (entry) result.push({ idx: i, x: xDay(i), y: y(p.total), ...entry });
+      if (entry) result.push({ idx: i, x: xDay(i), y: y(p.total || 0), ...entry });
     });
     return result;
-  }, [events, dayPoints]);
+  }, [events, safeDayPoints]);
 
   const incomeDaysRaw = useMemo(() => {
     const dayMap = new Map();
-    events.forEach((ev) => {
-      if (ev.type !== 'job' && ev.type !== 'salary' && ev.type !== 'extincome' && ev.type !== 'transfer-in') return;
+    (events || []).forEach((ev) => {
+      if (!ev || (ev.type !== 'job' && ev.type !== 'salary' && ev.type !== 'extincome' && ev.type !== 'transfer-in')) return;
       const k = dateKey(ev.date);
       if (!dayMap.has(k)) dayMap.set(k, { items: [], total: 0 });
       const entry = dayMap.get(k);
@@ -211,13 +212,14 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
       entry.total += ev.amount;
     });
     const result = [];
-    dayPoints.forEach((p, i) => {
+    safeDayPoints.forEach((p, i) => {
+      if (!p || !p.date) return;
       const k = dateKey(p.date);
       const entry = dayMap.get(k);
-      if (entry) result.push({ idx: i, x: xDay(i), y: y(p.total), ...entry });
+      if (entry) result.push({ idx: i, x: xDay(i), y: y(p.total || 0), ...entry });
     });
     return result;
-  }, [events, dayPoints]);
+  }, [events, safeDayPoints]);
 
   // Density adaptation: only show dots when there's enough room.
   // Approx ~6-8px between dots is the readable threshold.
