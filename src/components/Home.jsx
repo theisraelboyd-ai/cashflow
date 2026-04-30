@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { Plus, AlertTriangle, Briefcase, Receipt, TrendingUp, Coins, Settings, Eye, EyeOff, Pencil, Home as HomeIcon } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, fmtShort, greeting, dayLabel, addDays } from '../lib/format.js';
-import { generateEvents, projectBalances } from '../lib/projection.js';
+import { generateEvents, projectBalances, forecastCurrentBalances } from '../lib/projection.js';
 import { buildJobTaxLedger } from '../lib/tax.js';
 import { applyViewFilter, isHouseholdAccount } from '../lib/viewFilter.js';
 import { Money, ViewingAsSwitch } from './atoms.jsx';
@@ -18,10 +18,17 @@ export function Home({ data, setPage, setModal }) {
   today.setHours(0, 0, 0, 0);
   const horizon = addDays(today, 30);
 
-  const projection = useMemo(
-    () => projectBalances(viewData, today, horizon, { includeSpeculative: false, likelyWeight: 0.75 }),
-    [viewData]
-  );
+  const projection = useMemo(() => {
+    // Forecast each account's current balance from its lastUpdated to today,
+    // then project forward. This way the projection starts from where the
+    // user actually is now, not from a stale reconciled value.
+    const forecasted = forecastCurrentBalances(viewData, today);
+    const todayAnchored = {
+      ...viewData,
+      accounts: forecasted.map((a) => ({ ...a, balance: a.forecastedBalance })),
+    };
+    return projectBalances(todayAnchored, today, horizon, { includeSpeculative: false, likelyWeight: 0.75 });
+  }, [viewData]);
   const projectedTotal = projection.dayPoints[projection.dayPoints.length - 1]?.total || totalLiquid;
   const firstNegative = projection.dayPoints.find((p) => p.total < 0);
 
@@ -81,9 +88,16 @@ export function Home({ data, setPage, setModal }) {
     const householdAccounts = data.accounts.filter(isHouseholdAccount);
     if (householdAccounts.length === 0) return [];
     const householdIds = new Set(householdAccounts.map((a) => a.id));
+
+    // Forecast each account's current balance (anchor + drift since lastUpdated)
+    // so the sparkline starts from where the user actually is *today*, not from
+    // a stale reconciled value.
+    const forecasted = forecastCurrentBalances(data, today);
+    const householdAccountsForecasted = forecasted.filter((a) => householdIds.has(a.id));
+
     const householdData = {
       ...data,
-      accounts: householdAccounts,
+      accounts: householdAccountsForecasted.map((a) => ({ ...a, balance: a.forecastedBalance })),
       bills: (data.bills || []).filter((b) => householdIds.has(b.accountId)),
       externalIncome: (data.externalIncome || []).filter((e) => householdIds.has(e.accountId)),
       transfers: (data.transfers || []).filter(

@@ -222,6 +222,7 @@ export function generateEvents(data, start, end, options = {}) {
 
   // Bills
   (data.bills || []).forEach((bill) => {
+    if (bill.appliedToBalance) return;
     occurrencesInRange(bill, start, end).forEach((date) => {
       events.push({
         date,
@@ -237,6 +238,7 @@ export function generateEvents(data, start, end, options = {}) {
 
   // External income
   (data.externalIncome || []).forEach((item) => {
+    if (item.appliedToBalance) return;
     occurrencesInRange(item, start, end).forEach((date) => {
       events.push({
         date,
@@ -252,6 +254,9 @@ export function generateEvents(data, start, end, options = {}) {
 
   // Transfers
   (data.transfers || []).forEach((transfer) => {
+    // If a one-off was already applied directly to balances when recorded,
+    // don't generate events for it (would double-count)
+    if (transfer.appliedToBalance) return;
     occurrencesInRange(transfer, start, end).forEach((date) => {
       events.push({
         date,
@@ -329,6 +334,60 @@ export function projectBalances(data, fromDate, toDate, options = {}) {
   }
 
   return { dayPoints, events };
+}
+
+/**
+ * Forecast the *current* balance for each account by walking events from each
+ * account's lastUpdated forward to today. Returns a new accounts array where
+ * each account's `balance` is the forecasted current value, and `lastUpdated`
+ * is bumped to today (in memory only — caller decides whether to persist).
+ *
+ * The original `account.balance` is preserved as `account.anchorBalance` so
+ * callers can show "anchor £X — forecasted £Y" if they want to surface drift.
+ *
+ * Past one-off events that have `appliedToBalance: true` are skipped (they
+ * already modified the anchor when recorded).
+ *
+ * Recurring schedule events that fall between lastUpdated and today ARE
+ * applied — the assumption is "this scheduled bill/transfer ran in real life,
+ * so the bank balance has changed since the user last reconciled".
+ */
+export function forecastCurrentBalances(data, today) {
+  const todayMs = new Date(today).setHours(23, 59, 59, 999);
+  const todayDate = new Date(todayMs);
+
+  return (data.accounts || []).map((account) => {
+    const anchor = Number(account.balance);
+    const anchorBalance = Number.isFinite(anchor) ? anchor : 0;
+    const lastUpdatedMs = new Date(account.lastUpdated || todayMs).getTime();
+
+    if (!Number.isFinite(lastUpdatedMs) || lastUpdatedMs >= todayMs) {
+      // Reconciled today or future-dated — no drift to compute
+      return { ...account, anchorBalance, forecastedBalance: anchorBalance };
+    }
+
+    // Walk events from lastUpdated → today, applying the ones that hit this account.
+    const lastUpdated = new Date(lastUpdatedMs);
+    const events = generateEvents(data, lastUpdated, todayDate, { includeSpeculative: false, likelyWeight: 1.0 }) || [];
+
+    let forecasted = anchorBalance;
+    for (const ev of events) {
+      if (!ev || ev.accountId !== account.id) continue;
+      const evMs = new Date(ev.date).getTime();
+      // Only events strictly AFTER lastUpdated count - the lastUpdated moment
+      // is when the user said "this is my balance now", so events on that exact
+      // day are assumed already-baked-in.
+      if (evMs <= lastUpdatedMs) continue;
+      if (evMs > todayMs) continue;
+      // Skip one-off events that were already applied to the balance when recorded
+      if (ev.appliedToBalance) continue;
+      const amt = Number(ev.amount);
+      if (!Number.isFinite(amt)) continue;
+      forecasted += amt;
+    }
+
+    return { ...account, anchorBalance, forecastedBalance: forecasted };
+  });
 }
 
 export function eventsByDay(events) {

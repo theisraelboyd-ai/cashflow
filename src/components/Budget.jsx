@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { AlertTriangle, ChevronLeft, ChevronRight, Eye, EyeOff, Home } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, monthLabel, monthLongLabel, startOfMonth, endOfMonth, addMonths, dayLabel, dateKey } from '../lib/format.js';
-import { projectBalances, generateEvents } from '../lib/projection.js';
+import { projectBalances, generateEvents, forecastCurrentBalances } from '../lib/projection.js';
 import { applyViewFilter } from '../lib/viewFilter.js';
 import { PageHeader, Toggle, Money, ViewingAsSwitch } from './atoms.jsx';
 import { TrajectoryChart } from './TrajectoryChart.jsx';
@@ -106,8 +106,17 @@ export function Budget({ data, setModal }) {
         ? { includeSpeculative: false, likelyWeight: 0.75 }
         : { includeSpeculative: true, likelyWeight: 1.0 };
 
-      // Compute the balance at projStart by reverse-applying events between today and projStart.
-      const adjustedAccounts = (budgetData.accounts || []).map((a) => {
+      // Step 1: forecast each account from its lastUpdated forward to today.
+      // This gives us an "as of today" anchor we can then project from.
+      const forecasted = forecastCurrentBalances(budgetData, today);
+      const todayAnchored = forecasted.map((a) => ({
+        ...a,
+        balance: a.forecastedBalance,
+      }));
+
+      // Step 2: from the today-anchor, walk to projStart (forward or back) so
+      // the chart can begin at the correct projStart balance.
+      const adjustedAccounts = todayAnchored.map((a) => {
         let bal = Number(a.balance) || 0;
         try {
           if (projStart < today) {
@@ -132,7 +141,6 @@ export function Budget({ data, setModal }) {
       });
 
       const result = projectBalances({ ...budgetData, accounts: adjustedAccounts }, projStart, endDate, opts);
-      // Ensure shape
       return {
         dayPoints: Array.isArray(result?.dayPoints) ? result.dayPoints : [],
         events: Array.isArray(result?.events) ? result.events : [],
@@ -344,6 +352,8 @@ export function Budget({ data, setModal }) {
           dayPoints={dayPoints}
           events={events}
           onTapEvent={onTapEvent}
+          reconciliations={data.reconciliations || []}
+          accounts={budgetData.accounts}
         />
       </div>
 

@@ -7,6 +7,29 @@ import { previewJobTax, jobPayDate, calcAnnualHMRCTax, DEFAULT_EARNER_ID } from 
 import { ModalHeader, Field, Seg, OwnerSelector } from './atoms.jsx';
 import { exportData, importDataFromFile, defaultData } from '../hooks/useStoredData.js';
 
+// Helper: is a date string in the past (strictly before today)?
+function isPastDate(dateStr) {
+  if (!dateStr) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(dateStr);
+  d.setHours(0, 0, 0, 0);
+  return d < today;
+}
+
+// Helper: prompt the user about a past-dated one-off event.
+// Returns 'apply' (modify balances now), 'log' (history only), or 'cancel'.
+function promptPastDateChoice(label, amount) {
+  const sign = amount >= 0 ? '+' : '−';
+  const message =
+    `This ${label} is dated in the past.\n\n` +
+    `OK → Apply now: update account balances by ${sign}£${Math.abs(amount).toFixed(2)} ` +
+    `and bump 'last updated' to today.\n\n` +
+    `Cancel → Log only: keep on record but don't change balances. ` +
+    `Use this if your account already reflects this.`;
+  return window.confirm(message) ? 'apply' : 'log';
+}
+
 export function Modal({ modal, setModal, data, update, setData }) {
   const { styles, isDesktop } = useTheme();
   const close = () => setModal(null);
@@ -68,7 +91,7 @@ function ReconcileForm({ acc, data, update, close, setModal }) {
         variance,
         daysSince,
       });
-      d.reconciliations = d.reconciliations.slice(-50);
+      d.reconciliations = d.reconciliations.slice(-100);
     });
     close();
   };
@@ -164,17 +187,25 @@ function AccountForm({ item, data, update, close }) {
     update((d) => {
       if (item) {
         const target = d.accounts.find((a) => a.id === item.id);
-        const balanceChanged = Math.abs(Number(target.balance) - Number(balance)) > 0.001;
+        const previousBalance = Number(target.balance);
+        const balanceChanged = Math.abs(previousBalance - Number(balance)) > 0.001;
         target.name = name;
         target.balance = Number(balance);
         target.colorIdx = colorIdx;
         target.ownerId = ownerId;
         // If the user changed the balance, treat this as a reconciliation:
-        // bump lastUpdated to now so the variance/expected calculation resets.
-        // Otherwise the "expected" line on Home becomes nonsense - it'd add
-        // stale events to the new balance.
+        // bump lastUpdated and log the event so the chart can show a marker.
         if (balanceChanged) {
           target.lastUpdated = new Date().toISOString();
+          d.reconciliations = d.reconciliations || [];
+          d.reconciliations.push({
+            id: uid(),
+            accountId: item.id,
+            date: new Date().toISOString(),
+            previousBalance,
+            newBalance: Number(balance),
+          });
+          d.reconciliations = d.reconciliations.slice(-100);
         }
       } else {
         d.accounts.push({
@@ -720,14 +751,42 @@ function BillForm({ item, data, update, close }) {
 
   const submit = () => {
     const obj = { name, amount: Number(amount), frequency, dayOfMonth: Number(dayOfMonth), date, accountId, category };
+
+    // For NEW one-off bills with a past date, ask the user how to handle it
+    let applyToBalance = false;
+    if (!item && frequency === 'oneoff' && isPastDate(date)) {
+      const choice = promptPastDateChoice('bill', -Number(amount));
+      applyToBalance = choice === 'apply';
+    }
+
     update((d) => {
       if (item) {
         const idx = d.bills.findIndex((b) => b.id === item.id);
-        // Strip any legacy ownerId
         const { ownerId, ...keep } = d.bills[idx];
         d.bills[idx] = { ...keep, ...obj };
       } else {
-        d.bills.push({ id: uid(), ...obj });
+        const newBill = { id: uid(), ...obj };
+        if (applyToBalance) newBill.appliedToBalance = true;
+        d.bills.push(newBill);
+        if (applyToBalance) {
+          const acc = d.accounts.find((a) => a.id === accountId);
+          if (acc) {
+            const prev = Number(acc.balance);
+            const nowIso = new Date().toISOString();
+            acc.balance = prev - Number(amount);
+            acc.lastUpdated = nowIso;
+            d.reconciliations = d.reconciliations || [];
+            d.reconciliations.push({
+              id: uid(),
+              accountId: acc.id,
+              date: nowIso,
+              previousBalance: prev,
+              newBalance: acc.balance,
+              source: 'past-bill',
+            });
+            d.reconciliations = d.reconciliations.slice(-100);
+          }
+        }
       }
     });
     close();
@@ -827,12 +886,41 @@ function ExtIncomeForm({ item, data, update, close }) {
 
   const submit = () => {
     const obj = { name, amount: Number(amount), frequency, dayOfMonth: Number(dayOfMonth), date, accountId, earnerId };
+
+    // For NEW one-off income with a past date, ask the user how to handle it
+    let applyToBalance = false;
+    if (!item && frequency === 'oneoff' && isPastDate(date)) {
+      const choice = promptPastDateChoice('income', Number(amount));
+      applyToBalance = choice === 'apply';
+    }
+
     update((d) => {
       if (item) {
         const idx = d.externalIncome.findIndex((e) => e.id === item.id);
         d.externalIncome[idx] = { ...item, ...obj };
       } else {
-        d.externalIncome.push({ id: uid(), ...obj });
+        const newItem = { id: uid(), ...obj };
+        if (applyToBalance) newItem.appliedToBalance = true;
+        d.externalIncome.push(newItem);
+        if (applyToBalance) {
+          const acc = d.accounts.find((a) => a.id === accountId);
+          if (acc) {
+            const prev = Number(acc.balance);
+            const nowIso = new Date().toISOString();
+            acc.balance = prev + Number(amount);
+            acc.lastUpdated = nowIso;
+            d.reconciliations = d.reconciliations || [];
+            d.reconciliations.push({
+              id: uid(),
+              accountId: acc.id,
+              date: nowIso,
+              previousBalance: prev,
+              newBalance: acc.balance,
+              source: 'past-income',
+            });
+            d.reconciliations = d.reconciliations.slice(-100);
+          }
+        }
       }
     });
     close();
@@ -903,12 +991,57 @@ function TransferForm({ item, data, update, close }) {
   const submit = () => {
     if (fromAccountId === toAccountId) { alert('From and To must differ'); return; }
     const obj = { amount: Number(amount), fromAccountId, toAccountId, frequency, dayOfMonth: Number(dayOfMonth), date };
+
+    // For NEW one-off transfers with a past date, ask the user how to handle it
+    let applyToBalance = false;
+    if (!item && frequency === 'oneoff' && isPastDate(date)) {
+      const choice = promptPastDateChoice('transfer', -Number(amount));
+      applyToBalance = choice === 'apply';
+    }
+
     update((d) => {
       if (item) {
         const idx = d.transfers.findIndex((tr) => tr.id === item.id);
         d.transfers[idx] = { ...item, ...obj };
       } else {
-        d.transfers.push({ id: uid(), ...obj });
+        const newTransfer = { id: uid(), ...obj };
+        if (applyToBalance) newTransfer.appliedToBalance = true;
+        d.transfers.push(newTransfer);
+        if (applyToBalance) {
+          // Apply to source/destination balances and bump their lastUpdated
+          const fromAcc = d.accounts.find((a) => a.id === fromAccountId);
+          const toAcc = d.accounts.find((a) => a.id === toAccountId);
+          const nowIso = new Date().toISOString();
+          if (fromAcc) {
+            const prev = Number(fromAcc.balance);
+            fromAcc.balance = prev - Number(amount);
+            fromAcc.lastUpdated = nowIso;
+            d.reconciliations = d.reconciliations || [];
+            d.reconciliations.push({
+              id: uid(),
+              accountId: fromAcc.id,
+              date: nowIso,
+              previousBalance: prev,
+              newBalance: fromAcc.balance,
+              source: 'past-transfer',
+            });
+          }
+          if (toAcc) {
+            const prev = Number(toAcc.balance);
+            toAcc.balance = prev + Number(amount);
+            toAcc.lastUpdated = nowIso;
+            d.reconciliations = d.reconciliations || [];
+            d.reconciliations.push({
+              id: uid(),
+              accountId: toAcc.id,
+              date: nowIso,
+              previousBalance: prev,
+              newBalance: toAcc.balance,
+              source: 'past-transfer',
+            });
+          }
+          d.reconciliations = d.reconciliations.slice(-100);
+        }
       }
     });
     close();

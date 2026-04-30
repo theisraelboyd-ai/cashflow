@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, fmtShort, dayLabel, dateKey, monthLabel } from '../lib/format.js';
 
-export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accounts = [], visibleAccountIds = null }) {
+export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accounts = [], visibleAccountIds = null, reconciliations = [] }) {
   const { t, privacy, isDesktop } = useTheme();
   const W = isDesktop ? 800 : 320;
   const H = isDesktop ? 280 : 200;
@@ -113,6 +113,46 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
   }, [accounts, visibleAccountIds, safeDayPoints, t]);
 
   const firstNegativeIdx = safeDayPoints.findIndex((p) => p.total < 0);
+
+  // Reconciliation markers - moments where the user manually anchored a balance.
+  // Place each on the line at the day matching the reconciliation date.
+  const reconciliationMarkers = useMemo(() => {
+    if (!reconciliations || reconciliations.length === 0 || safeDayPoints.length === 0) return [];
+    const accountColorMap = new Map(
+      (accounts || []).map((a) => [a.id, t.accountColors?.[a.colorIdx ?? 0] || t.accent])
+    );
+    const accountNameMap = new Map((accounts || []).map((a) => [a.id, a.name]));
+    const startMs = safeDayPoints[0]?.date?.getTime();
+    const endMs = safeDayPoints[safeDayPoints.length - 1]?.date?.getTime();
+    if (!startMs || !endMs) return [];
+    return reconciliations
+      .map((r) => {
+        const d = new Date(r.date);
+        d.setHours(0, 0, 0, 0);
+        const tMs = d.getTime();
+        if (tMs < startMs || tMs > endMs) return null;
+        // Find nearest dayPoint by time
+        let bestIdx = 0;
+        let bestDelta = Infinity;
+        for (let i = 0; i < safeDayPoints.length; i++) {
+          const dp = safeDayPoints[i];
+          if (!dp || !dp.date) continue;
+          const delta = Math.abs(dp.date.getTime() - tMs);
+          if (delta < bestDelta) {
+            bestDelta = delta;
+            bestIdx = i;
+          }
+        }
+        const accName = accountNameMap.get(r.accountId) || 'Account';
+        return {
+          ...r,
+          idx: bestIdx,
+          color: accountColorMap.get(r.accountId) || t.accent,
+          accountName: accName,
+        };
+      })
+      .filter(Boolean);
+  }, [reconciliations, accounts, safeDayPoints, t]);
 
   // Find lowest point for callout
   let lowestIdx = 0;
@@ -628,6 +668,26 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
           </g>
         )}
 
+        {/* Reconciliation markers - moments user manually set the balance.
+            Drawn as a distinctive pinned-flag look so they read clearly as
+            "ground truth" rather than blending with event dots. */}
+        {reconciliationMarkers.map((rec, i) => {
+          const dp = safeDayPoints[rec.idx];
+          if (!dp) return null;
+          const cx = xDay(rec.idx);
+          const cy = y(dp.total || 0);
+          return (
+            <g key={`rec-${rec.id || i}`}>
+              {/* Outer halo - subtle, makes it stand out from event dots */}
+              <circle cx={cx} cy={cy} r="9" fill={rec.color} opacity="0.12" />
+              {/* Inner ring - clean, account-coloured */}
+              <circle cx={cx} cy={cy} r="6" fill={t.bg} stroke={rec.color} strokeWidth="2.2" />
+              {/* Dot in centre */}
+              <circle cx={cx} cy={cy} r="2.2" fill={rec.color} />
+            </g>
+          );
+        })}
+
         {/* Lowest-point callout when chart goes deeper than zero */}
         {showLowest && lowestIdx !== firstNegativeIdx && activeIdx === null && (
           <g>
@@ -693,6 +753,11 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
             const activePoint = safeDayPoints[activeIdx];
             if (!activePoint) return null;
             const activeEvents = eventsByDayKey.get(dateKey(activePoint.date)) || [];
+            const dayKey = dateKey(activePoint.date);
+            const recsToday = reconciliationMarkers.filter((r) => {
+              const dp = safeDayPoints[r.idx];
+              return dp && dateKey(dp.date) === dayKey;
+            });
             return (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
@@ -729,6 +794,31 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
                     {fmt(activePoint.total)}
                   </div>
                 </div>
+                {recsToday.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4, marginBottom: 4 }}>
+                    {recsToday.map((r, i) => (
+                      <div
+                        key={`rec-${i}`}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          fontSize: 11,
+                          color: t.textDim,
+                          padding: '2px 0',
+                          fontStyle: 'italic',
+                        }}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: 3, background: r.color, display: 'inline-block' }} />
+                          {r.accountName} reconciled
+                        </span>
+                        <span className={privacy ? 'private-blur' : ''} style={{ color: t.text, fontWeight: 600 }}>
+                          {fmt(r.newBalance)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {activeEvents.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
                     {activeEvents.slice(0, 4).map((ev, i) => (
