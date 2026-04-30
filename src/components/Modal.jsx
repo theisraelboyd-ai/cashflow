@@ -56,7 +56,11 @@ export function Modal({ modal, setModal, data, update, setData }) {
 
 function ReconcileForm({ acc, data, update, close, setModal }) {
   const { styles, t } = useTheme();
-  const [newBalance, setNewBalance] = useState(acc.balance);
+  // Store as string so user can type freely; parse only on submit.
+  // Start empty so first keypress IS the new value (no need to clear stale digits).
+  const [newBalance, setNewBalance] = useState('');
+  const [hasTyped, setHasTyped] = useState(false);
+  const inputRef = useRef(null);
 
   const lastUpdate = new Date(acc.lastUpdated);
   const today = new Date();
@@ -72,21 +76,34 @@ function ReconcileForm({ acc, data, update, close, setModal }) {
     expected += e.amount;
   });
 
-  const variance = Number(newBalance) - expected;
-  const hasVariance = Math.abs(variance) > 0.01;
+  // Parse the input - tolerate £, commas, spaces
+  const parseAmount = (s) => {
+    if (typeof s !== 'string') return Number(s) || 0;
+    const cleaned = s.replace(/[£,\s]/g, '').trim();
+    if (!cleaned) return null;  // empty input
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const parsedBalance = parseAmount(newBalance);
+  const hasValid = parsedBalance !== null;
+  const variance = hasValid ? (parsedBalance - expected) : 0;
+  const hasVariance = hasValid && Math.abs(variance) > 0.01;
 
   const submit = () => {
+    if (!hasValid) return;  // safety - shouldn't be tappable
     update((d) => {
       const target = d.accounts.find((a) => a.id === acc.id);
-      target.balance = Number(newBalance);
+      const previousBalance = Number(target.balance);
+      target.balance = parsedBalance;
       target.lastUpdated = new Date().toISOString();
       d.reconciliations = d.reconciliations || [];
       d.reconciliations.push({
         id: uid(),
         accountId: acc.id,
         date: new Date().toISOString(),
-        previousBalance: acc.balance,
-        newBalance: Number(newBalance),
+        previousBalance,
+        newBalance: parsedBalance,
         expected,
         variance,
         daysSince,
@@ -99,11 +116,31 @@ function ReconcileForm({ acc, data, update, close, setModal }) {
   return (
     <div>
       <ModalHeader title={acc.name} sub="Update balance" />
-      <div style={styles.reconcileBox}>
+      <div
+        style={{ ...styles.reconcileBox, cursor: 'text' }}
+        onClick={() => {
+          if (inputRef.current) inputRef.current.focus();
+        }}
+      >
         <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5, color: t.textDim, marginBottom: 6 }}>
           Today's actual balance
         </div>
-        <input type="number" step="0.01" value={newBalance} onChange={(e) => setNewBalance(e.target.value)} style={styles.bigInput} autoFocus />
+        <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 12 }}>
+          Currently: {fmt(acc.balance)} {daysSince > 0 ? `(${daysSince}d ago)` : '(today)'}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+          <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28, color: t.textDim, fontWeight: 500 }}>£</span>
+          <input
+            ref={inputRef}
+            type="text"
+            inputMode="decimal"
+            value={newBalance}
+            onChange={(e) => { setNewBalance(e.target.value); setHasTyped(true); }}
+            placeholder="0.00"
+            style={{ ...styles.bigInput, flex: 1 }}
+            autoFocus
+          />
+        </div>
       </div>
 
       {daysSince > 0 && (
@@ -144,7 +181,17 @@ function ReconcileForm({ acc, data, update, close, setModal }) {
 
       <div style={styles.formActions}>
         <button style={styles.btnGhost} onClick={close}>Cancel</button>
-        <button style={styles.btnPrimary} onClick={submit}>Update</button>
+        <button
+          style={{
+            ...styles.btnPrimary,
+            opacity: hasValid ? 1 : 0.4,
+            cursor: hasValid ? 'pointer' : 'not-allowed',
+          }}
+          onClick={submit}
+          disabled={!hasValid}
+        >
+          Update
+        </button>
       </div>
 
       {setModal && (
@@ -176,25 +223,35 @@ function ReconcileForm({ acc, data, update, close, setModal }) {
 function AccountForm({ item, data, update, close }) {
   const { styles, t, viewingAs } = useTheme();
   const [name, setName] = useState(item?.name || '');
-  const [balance, setBalance] = useState(item?.balance ?? 0);
+  const [balance, setBalance] = useState(() =>
+    item ? Number(item.balance ?? 0).toFixed(2) : '0.00'
+  );
   const [colorIdx, setColorIdx] = useState(item?.colorIdx ?? 0);
-  // Default new account owner to the currently-viewed earner, falling back to household
   const [ownerId, setOwnerId] = useState(
     item?.ownerId || (viewingAs !== 'household' ? viewingAs : 'household')
   );
+  // Hide ownership picker by default for existing accounts -
+  // it should be set once at creation, rarely changed thereafter
+  const [showAdvanced, setShowAdvanced] = useState(!item);
+
+  const parseAmount = (s) => {
+    if (typeof s !== 'string') return Number(s) || 0;
+    const cleaned = s.replace(/[£,\s]/g, '').trim();
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  };
 
   const submit = () => {
+    const parsedBalance = parseAmount(balance);
     update((d) => {
       if (item) {
         const target = d.accounts.find((a) => a.id === item.id);
         const previousBalance = Number(target.balance);
-        const balanceChanged = Math.abs(previousBalance - Number(balance)) > 0.001;
+        const balanceChanged = Math.abs(previousBalance - parsedBalance) > 0.001;
         target.name = name;
-        target.balance = Number(balance);
+        target.balance = parsedBalance;
         target.colorIdx = colorIdx;
         target.ownerId = ownerId;
-        // If the user changed the balance, treat this as a reconciliation:
-        // bump lastUpdated and log the event so the chart can show a marker.
         if (balanceChanged) {
           target.lastUpdated = new Date().toISOString();
           d.reconciliations = d.reconciliations || [];
@@ -203,7 +260,7 @@ function AccountForm({ item, data, update, close }) {
             accountId: item.id,
             date: new Date().toISOString(),
             previousBalance,
-            newBalance: Number(balance),
+            newBalance: parsedBalance,
           });
           d.reconciliations = d.reconciliations.slice(-100);
         }
@@ -211,7 +268,7 @@ function AccountForm({ item, data, update, close }) {
         d.accounts.push({
           id: uid(),
           name,
-          balance: Number(balance),
+          balance: parsedBalance,
           colorIdx,
           ownerId,
           lastUpdated: new Date().toISOString(),
@@ -238,13 +295,20 @@ function AccountForm({ item, data, update, close }) {
         <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Personal" />
       </Field>
       <Field label="Current balance">
-        <input style={styles.input} type="number" step="0.01" value={balance} onChange={(e) => setBalance(e.target.value)} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px', border: `1px solid ${t.border}`, borderRadius: 8, background: t.bgInset }}>
+          <span style={{ color: t.textDim, fontSize: 16, fontWeight: 500 }}>£</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={balance}
+            onChange={(e) => setBalance(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            onClick={(e) => e.target.select()}
+            placeholder="0.00"
+            style={{ ...styles.input, border: 'none', background: 'transparent', padding: '12px 0' }}
+          />
+        </div>
       </Field>
-      {showOwners && (
-        <Field label="Belongs to">
-          <OwnerSelector value={ownerId} onChange={setOwnerId} earners={data.earners} />
-        </Field>
-      )}
       <Field label="Colour">
         <div style={{ display: 'flex', gap: 8 }}>
           {t.accountColors.map((c, i) => (
@@ -263,6 +327,50 @@ function AccountForm({ item, data, update, close }) {
           ))}
         </div>
       </Field>
+      {showOwners && (
+        showAdvanced ? (
+          <Field label="Belongs to">
+            <OwnerSelector value={ownerId} onChange={setOwnerId} earners={data.earners} />
+            {item && (
+              <button
+                onClick={() => setShowAdvanced(false)}
+                style={{
+                  marginTop: 6,
+                  background: 'transparent',
+                  border: 'none',
+                  color: t.textFaint,
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  padding: 0,
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.5,
+                }}
+              >
+                hide ownership
+              </button>
+            )}
+          </Field>
+        ) : (
+          <button
+            onClick={() => setShowAdvanced(true)}
+            style={{
+              marginTop: 6,
+              marginBottom: 8,
+              background: 'transparent',
+              border: 'none',
+              color: t.textFaint,
+              fontSize: 11,
+              cursor: 'pointer',
+              padding: '6px 0',
+              textTransform: 'uppercase',
+              letterSpacing: 0.5,
+              display: 'block',
+            }}
+          >
+            change ownership →
+          </button>
+        )
+      )}
       <div style={styles.formActions}>
         {item && <button style={styles.btnDanger} onClick={remove}><Trash2 size={14} /></button>}
         <button style={styles.btnGhost} onClick={close}>Cancel</button>

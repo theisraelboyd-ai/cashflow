@@ -35,7 +35,7 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
   const xDay = (i) =>
     padLeft + (i / Math.max(1, safeDayPoints.length - 1)) * (W - padLeft - padX);
 
-  const totals = safeDayPoints.map((p) => p.total || 0);
+  const totals = safeDayPoints.map((p) => (p && Number.isFinite(p.total)) ? p.total : 0);
   const maxBalance = totals.length ? Math.max(...totals, 100) : 100;
   const minBalance = totals.length ? Math.min(...totals, 0) : 0;
 
@@ -52,10 +52,10 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
   };
 
   const yZero = y(0);
-  const linePath = safeDayPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xDay(i)} ${y(p.total || 0)}`).join(' ');
+  const linePath = safeDayPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xDay(i)} ${y((p && Number.isFinite(p.total)) ? p.total : 0)}`).join(' ');
   const fillPath = safeDayPoints.length > 0
     ? `M ${xDay(0)} ${yZero} ` +
-      safeDayPoints.map((p, i) => `L ${xDay(i)} ${y(p.total || 0)}`).join(' ') +
+      safeDayPoints.map((p, i) => `L ${xDay(i)} ${y((p && Number.isFinite(p.total)) ? p.total : 0)}`).join(' ') +
       ` L ${xDay(safeDayPoints.length - 1)} ${yZero} Z`
     : '';
 
@@ -73,6 +73,7 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
 
   const lineSegments = useMemo(() => {
     if (safeDayPoints.length < 2) return [];
+    const safeTotal = (p) => (p && Number.isFinite(p.total)) ? p.total : 0;
     const classifySeg = (a, b) => {
       const delta = b - a;
       // Threshold scales with magnitude — small movements don't trigger colour change.
@@ -82,9 +83,9 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
       return 'flat';
     };
     const segments = [];
-    let cur = { kind: classifySeg(safeDayPoints[0].total, safeDayPoints[1].total), startIdx: 0 };
+    let cur = { kind: classifySeg(safeTotal(safeDayPoints[0]), safeTotal(safeDayPoints[1])), startIdx: 0 };
     for (let i = 1; i < safeDayPoints.length; i++) {
-      const k = classifySeg(safeDayPoints[i - 1].total, safeDayPoints[i].total);
+      const k = classifySeg(safeTotal(safeDayPoints[i - 1]), safeTotal(safeDayPoints[i]));
       if (k !== cur.kind) {
         segments.push({ ...cur, endIdx: i });
         cur = { kind: k, startIdx: i };
@@ -112,7 +113,7 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
       });
   }, [accounts, visibleAccountIds, safeDayPoints, t]);
 
-  const firstNegativeIdx = safeDayPoints.findIndex((p) => p.total < 0);
+  const firstNegativeIdx = safeDayPoints.findIndex((p) => p && Number.isFinite(p.total) && p.total < 0);
 
   // Reconciliation markers - moments where the user manually anchored a balance.
   // Place each on the line at the day matching the reconciliation date.
@@ -157,10 +158,13 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
   // Find lowest point for callout
   let lowestIdx = 0;
   for (let i = 1; i < safeDayPoints.length; i++) {
-    if (safeDayPoints[i].total < safeDayPoints[lowestIdx].total) lowestIdx = i;
+    const cur = safeDayPoints[i];
+    const best = safeDayPoints[lowestIdx];
+    if (!cur || !Number.isFinite(cur.total)) continue;
+    if (!best || !Number.isFinite(best.total) || cur.total < best.total) lowestIdx = i;
   }
   const lowestPoint = safeDayPoints[lowestIdx] || null;
-  const showLowest = lowestPoint && lowestPoint.total < 0;
+  const showLowest = lowestPoint && Number.isFinite(lowestPoint.total) && lowestPoint.total < 0;
 
   // Month boundaries with auto-thinning based on width-per-month
   const monthBoundaries = useMemo(() => {
@@ -575,7 +579,7 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
           for (let j = seg.startIdx; j <= seg.endIdx; j++) {
             const dp = safeDayPoints[j];
             if (!dp) continue;
-            ptsPath.push(`${j === seg.startIdx ? 'M' : 'L'} ${xDay(j)} ${y(dp.total || 0)}`);
+            ptsPath.push(`${j === seg.startIdx ? 'M' : 'L'} ${xDay(j)} ${y((dp && Number.isFinite(dp.total)) ? dp.total : 0)}`);
           }
           if (ptsPath.length < 2) return null;
           return (
@@ -675,7 +679,7 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
           const dp = safeDayPoints[rec.idx];
           if (!dp) return null;
           const cx = xDay(rec.idx);
-          const cy = y(dp.total || 0);
+          const cy = y((dp && Number.isFinite(dp.total)) ? dp.total : 0);
           return (
             <g key={`rec-${rec.id || i}`}>
               {/* Outer halo - subtle, makes it stand out from event dots */}
@@ -715,7 +719,7 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
           </g>
         )}
 
-        {activeIdx !== null && (
+        {activeIdx !== null && safeDayPoints[activeIdx] && (
           <g>
             <line
               x1={xDay(activeIdx)}
@@ -728,7 +732,7 @@ export function TrajectoryChart({ dayPoints = [], events = [], onTapEvent, accou
             />
             <circle
               cx={xDay(activeIdx)}
-              cy={y(safeDayPoints[activeIdx].total)}
+              cy={y(safeDayPoints[activeIdx].total || 0)}
               r="5"
               fill={t.accent}
               stroke={t.bg}

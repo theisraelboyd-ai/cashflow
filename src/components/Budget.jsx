@@ -154,7 +154,7 @@ export function Budget({ data, setModal }) {
   const { dayPoints, events } = projection;
   const startTotal = dayPoints[0]?.total ?? 0;
   const endTotal = dayPoints[dayPoints.length - 1]?.total ?? 0;
-  const firstNegative = dayPoints.find((p) => p && p.total < 0);
+  const firstNegative = dayPoints.find((p) => p && Number.isFinite(p.total) && p.total < 0);
 
   const monthSummary = useMemo(() => {
     const months = [];

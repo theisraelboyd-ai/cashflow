@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Plus, AlertTriangle, Briefcase, Receipt, TrendingUp, Coins, Settings, Eye, EyeOff, Pencil, Home as HomeIcon } from 'lucide-react';
+import { Plus, AlertTriangle, Briefcase, Receipt, TrendingUp, Coins, Settings, Eye, EyeOff, Home as HomeIcon } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, fmtShort, greeting, dayLabel, addDays } from '../lib/format.js';
 import { generateEvents, projectBalances, forecastCurrentBalances } from '../lib/projection.js';
@@ -22,15 +22,24 @@ export function Home({ data, setPage, setModal }) {
     // Forecast each account's current balance from its lastUpdated to today,
     // then project forward. This way the projection starts from where the
     // user actually is now, not from a stale reconciled value.
-    const forecasted = forecastCurrentBalances(viewData, today);
-    const todayAnchored = {
-      ...viewData,
-      accounts: forecasted.map((a) => ({ ...a, balance: a.forecastedBalance })),
-    };
-    return projectBalances(todayAnchored, today, horizon, { includeSpeculative: false, likelyWeight: 0.75 });
+    try {
+      const forecasted = forecastCurrentBalances(viewData, today);
+      const todayAnchored = {
+        ...viewData,
+        accounts: forecasted.map((a) => ({ ...a, balance: a.forecastedBalance })),
+      };
+      const result = projectBalances(todayAnchored, today, horizon, { includeSpeculative: false, likelyWeight: 0.75 });
+      return {
+        dayPoints: Array.isArray(result?.dayPoints) ? result.dayPoints : [],
+        events: Array.isArray(result?.events) ? result.events : [],
+      };
+    } catch (e) {
+      console.error('Home projection failed', e);
+      return { dayPoints: [], events: [] };
+    }
   }, [viewData]);
-  const projectedTotal = projection.dayPoints[projection.dayPoints.length - 1]?.total || totalLiquid;
-  const firstNegative = projection.dayPoints.find((p) => p.total < 0);
+  const projectedTotal = projection.dayPoints[projection.dayPoints.length - 1]?.total ?? totalLiquid;
+  const firstNegative = projection.dayPoints.find((p) => p && p.total < 0);
 
   // Household-level computations - independent of viewingAs
   const householdHealth = useMemo(() => {
@@ -334,7 +343,11 @@ function AccountRow({ acc, setModal, data }) {
   const isHouseholdAcc = acc.ownerId === 'household' || !acc.ownerId;
 
   return (
-    <div style={styles.accountRow} onClick={() => setModal({ type: 'reconcile', payload: acc })}>
+    <div
+      style={{ ...styles.accountRow, cursor: 'pointer' }}
+      onClick={() => setModal({ type: 'reconcile', payload: acc })}
+      title="Tap to update balance"
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
         <div style={{ ...styles.accountDot, background: accountColor }} />
         <div style={{ minWidth: 0 }}>
@@ -345,41 +358,17 @@ function AccountRow({ acc, setModal, data }) {
             )}
           </div>
           <div style={styles.accountMeta}>
-            {daysSince === 0 ? 'updated today' : `${daysSince}d ago`}
+            {daysSince === 0 ? 'updated today · tap to update' : `${daysSince}d ago · tap to update`}
           </div>
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ textAlign: 'right' }}>
-          <div className={privacy ? 'private-blur' : ''} style={styles.accountBal}>{fmt(acc.balance)}</div>
-          {showVariance && (
-            <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }} className={privacy ? 'private-blur' : ''}>
-              expected {fmt(expected)}
-            </div>
-          )}
-        </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setModal({ type: 'account', payload: acc });
-          }}
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: 14,
-            border: 'none',
-            background: 'transparent',
-            color: t.textFaint,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
-          title="Edit account"
-        >
-          <Pencil size={13} />
-        </button>
+      <div style={{ textAlign: 'right' }}>
+        <div className={privacy ? 'private-blur' : ''} style={styles.accountBal}>{fmt(acc.balance)}</div>
+        {showVariance && (
+          <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }} className={privacy ? 'private-blur' : ''}>
+            expected {fmt(expected)}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -416,17 +405,27 @@ function QuickCard({ icon, label, value, sub, onClick, noPrivacy }) {
 function Sparkline({ points, privacy }) {
   const { t } = useTheme();
   if (!points || points.length < 2) return null;
-  const W = 280;
-  const H = 56;  // taller — was 38, too cramped
-  const padX = 6;
-  const padY = 8;
+
+  // SVG uses a 4:1 aspect ratio - scales down nicely on mobile, doesn't feel cramped
+  const W = 400;
+  const H = 80;
+  const padX = 10;
+  const padY = 14;
 
   const values = points.map((p) => p.value);
-  const min = Math.min(...values, 0);  // include 0 in scale so we can show zero-line
-  const max = Math.max(...values, 0);
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+  const dataRange = Math.max(1, dataMax - dataMin);
+
+  // Y-axis range: show data with comfortable headroom. Always include zero
+  // if the values get close to it (within 25% of the range), so a deficit
+  // is visually obvious.
+  const includeZero = dataMin < 0 || dataMin < dataRange * 0.25;
+  const min = includeZero ? Math.min(dataMin, 0) : dataMin;
+  const max = dataMax;
   const range = Math.max(1, max - min);
-  const minP = min - range * 0.08;
-  const maxP = max + range * 0.08;
+  const minP = min - range * 0.18;
+  const maxP = max + range * 0.18;
   const yRange = Math.max(1, maxP - minP);
 
   const x = (i) => padX + (i / (points.length - 1)) * (W - padX * 2);
@@ -435,58 +434,139 @@ function Sparkline({ points, privacy }) {
   const startVal = values[0];
   const endVal = values[values.length - 1];
   const delta = endVal - startVal;
-  const stroke = delta >= 0 ? t.income : t.expense;
+  const isUp = delta >= 0;
+  const stroke = isUp ? t.income : t.expense;
 
-  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(p.value)}`).join(' ');
-  const fillPath = `${linePath} L ${x(points.length - 1)} ${H - padY} L ${x(0)} ${H - padY} Z`;
+  // Smooth Catmull-Rom path - tension makes it less wavy than the default
+  const buildSmoothPath = () => {
+    if (points.length < 3) {
+      return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(p.value).toFixed(1)}`).join(' ');
+    }
+    const pts = points.map((p, i) => ({ x: x(i), y: y(p.value) }));
+    let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    const tension = 0.4;  // lower = smoother curves, less faithful to bumps
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2] || pts[i + 1];
+      const cp1x = p1.x + (p2.x - p0.x) * tension / 2;
+      const cp1y = p1.y + (p2.y - p0.y) * tension / 2;
+      const cp2x = p2.x - (p3.x - p1.x) * tension / 2;
+      const cp2y = p2.y - (p3.y - p1.y) * tension / 2;
+      d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    }
+    return d;
+  };
 
-  // Should we draw the zero-baseline? Only if it falls within the visible y-range
+  const linePath = buildSmoothPath();
+  const fillPath = `${linePath} L ${x(points.length - 1).toFixed(1)} ${(H - padY).toFixed(1)} L ${x(0).toFixed(1)} ${(H - padY).toFixed(1)} Z`;
+
   const zeroY = y(0);
-  const showZero = min < 0 || max < 0;  // chart actually crosses zero somewhere
+  const showZero = includeZero && min < 0;
+
+  // Unique gradient id per render so multiple sparklines don't conflict
+  const gradId = `sparkFill-${stroke.replace('#', '')}`;
 
   return (
-    <div style={{ marginBottom: 10, marginTop: 4 }}>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: 'block', height: H, overflow: 'visible' }}>
+    <div style={{ marginBottom: 12, marginTop: 4 }}>
+      {/* Chart sits above the labels, with the now/forecast values inline */}
+      <svg
+        width="100%"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ display: 'block', height: H, overflow: 'visible' }}
+      >
         <defs>
-          <linearGradient id="sparkFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={stroke} stopOpacity="0.18" />
-            <stop offset="100%" stopColor={stroke} stopOpacity="0.02" />
+          <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
           </linearGradient>
         </defs>
-        <path d={fillPath} fill="url(#sparkFill)" />
+        <path d={fillPath} fill={`url(#${gradId})`} />
         {showZero && (
-          <line x1={padX} x2={W - padX} y1={zeroY} y2={zeroY} stroke={t.border} strokeWidth="0.8" strokeDasharray="2 3" opacity="0.7" />
+          <line
+            x1={padX}
+            x2={W - padX}
+            y1={zeroY}
+            y2={zeroY}
+            stroke={t.textFaint}
+            strokeWidth="0.6"
+            strokeDasharray="2 4"
+            opacity="0.6"
+          />
         )}
-        <path d={linePath} fill="none" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
-        {/* Start dot - subtle */}
-        <circle cx={x(0)} cy={y(startVal)} r="2" fill={t.bgElev} stroke={stroke} strokeWidth="1.2" />
-        {/* End dot - emphasised */}
-        <circle cx={x(points.length - 1)} cy={y(endVal)} r="3" fill={stroke} stroke={t.bgElev} strokeWidth="1.2" />
+        <path
+          d={linePath}
+          fill="none"
+          stroke={stroke}
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {/* End dot only - clean single emphasis */}
+        <circle cx={x(points.length - 1)} cy={y(endVal)} r="7" fill={stroke} opacity="0.15" />
+        <circle cx={x(points.length - 1)} cy={y(endVal)} r="3" fill={stroke} />
       </svg>
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'baseline',
-        fontSize: 10,
-        color: t.textFaint,
-        marginTop: 6,
-        padding: '0 2px',
-        letterSpacing: 0.3,
-      }}>
+
+      {/* Three-up legend underneath: now, delta, forecast */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr auto 1fr',
+          gap: 12,
+          alignItems: 'baseline',
+          marginTop: 8,
+          paddingTop: 8,
+          borderTop: `1px solid ${t.border}`,
+        }}
+      >
         <div>
-          <span style={{ textTransform: 'uppercase', fontWeight: 600, marginRight: 4 }}>now</span>
-          <span style={{ color: t.textDim, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+          <div style={{ fontSize: 9, color: t.textFaint, letterSpacing: 1.2, textTransform: 'uppercase', fontWeight: 600, marginBottom: 1 }}>
+            Now
+          </div>
+          <div
+            style={{
+              fontSize: 14,
+              color: t.text,
+              fontWeight: 600,
+            }}
+            className={privacy ? 'private-blur' : ''}
+          >
             {fmtShort(startVal)}
-          </span>
+          </div>
         </div>
-        <div style={{ color: stroke, fontWeight: 700, fontSize: 11 }} className={privacy ? 'private-blur' : ''}>
-          {delta >= 0 ? '+' : '−'}{fmtShort(Math.abs(delta))}
+        <div
+          style={{
+            fontSize: 12,
+            color: stroke,
+            fontWeight: 700,
+            letterSpacing: 0.2,
+            textAlign: 'center',
+            padding: '3px 10px',
+            background: stroke + '14',
+            borderRadius: 999,
+            border: `1px solid ${stroke}33`,
+            alignSelf: 'center',
+          }}
+          className={privacy ? 'private-blur' : ''}
+        >
+          {isUp ? '+' : '−'}{fmtShort(Math.abs(delta))}
         </div>
         <div style={{ textAlign: 'right' }}>
-          <span style={{ textTransform: 'uppercase', fontWeight: 600, marginRight: 4 }}>30d</span>
-          <span style={{ color: t.textDim, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+          <div style={{ fontSize: 9, color: t.textFaint, letterSpacing: 1.2, textTransform: 'uppercase', fontWeight: 600, marginBottom: 1 }}>
+            In 30 days
+          </div>
+          <div
+            style={{
+              fontSize: 14,
+              color: t.text,
+              fontWeight: 600,
+            }}
+            className={privacy ? 'private-blur' : ''}
+          >
             {fmtShort(endVal)}
-          </span>
+          </div>
         </div>
       </div>
     </div>

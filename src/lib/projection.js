@@ -357,36 +357,40 @@ export function forecastCurrentBalances(data, today) {
   const todayDate = new Date(todayMs);
 
   return (data.accounts || []).map((account) => {
-    const anchor = Number(account.balance);
-    const anchorBalance = Number.isFinite(anchor) ? anchor : 0;
-    const lastUpdatedMs = new Date(account.lastUpdated || todayMs).getTime();
+    try {
+      const anchor = Number(account.balance);
+      const anchorBalance = Number.isFinite(anchor) ? anchor : 0;
+      const lastUpdatedMs = new Date(account.lastUpdated || todayMs).getTime();
 
-    if (!Number.isFinite(lastUpdatedMs) || lastUpdatedMs >= todayMs) {
-      // Reconciled today or future-dated — no drift to compute
-      return { ...account, anchorBalance, forecastedBalance: anchorBalance };
+      if (!Number.isFinite(lastUpdatedMs) || lastUpdatedMs >= todayMs) {
+        // Reconciled today or future-dated — no drift to compute
+        return { ...account, anchorBalance, forecastedBalance: anchorBalance };
+      }
+
+      // Walk events from lastUpdated → today, applying the ones that hit this account.
+      const lastUpdated = new Date(lastUpdatedMs);
+      const events = generateEvents(data, lastUpdated, todayDate, { includeSpeculative: false, likelyWeight: 1.0 }) || [];
+
+      let forecasted = anchorBalance;
+      for (const ev of events) {
+        if (!ev || ev.accountId !== account.id) continue;
+        const evMs = new Date(ev.date).getTime();
+        if (!Number.isFinite(evMs)) continue;
+        // Only events strictly AFTER lastUpdated count
+        if (evMs <= lastUpdatedMs) continue;
+        if (evMs > todayMs) continue;
+        if (ev.appliedToBalance) continue;
+        const amt = Number(ev.amount);
+        if (!Number.isFinite(amt)) continue;
+        forecasted += amt;
+      }
+
+      return { ...account, anchorBalance, forecastedBalance: forecasted };
+    } catch (e) {
+      console.warn('forecastCurrentBalances failed for account', account?.id, e);
+      const safeBal = Number.isFinite(Number(account?.balance)) ? Number(account.balance) : 0;
+      return { ...account, anchorBalance: safeBal, forecastedBalance: safeBal };
     }
-
-    // Walk events from lastUpdated → today, applying the ones that hit this account.
-    const lastUpdated = new Date(lastUpdatedMs);
-    const events = generateEvents(data, lastUpdated, todayDate, { includeSpeculative: false, likelyWeight: 1.0 }) || [];
-
-    let forecasted = anchorBalance;
-    for (const ev of events) {
-      if (!ev || ev.accountId !== account.id) continue;
-      const evMs = new Date(ev.date).getTime();
-      // Only events strictly AFTER lastUpdated count - the lastUpdated moment
-      // is when the user said "this is my balance now", so events on that exact
-      // day are assumed already-baked-in.
-      if (evMs <= lastUpdatedMs) continue;
-      if (evMs > todayMs) continue;
-      // Skip one-off events that were already applied to the balance when recorded
-      if (ev.appliedToBalance) continue;
-      const amt = Number(ev.amount);
-      if (!Number.isFinite(amt)) continue;
-      forecasted += amt;
-    }
-
-    return { ...account, anchorBalance, forecastedBalance: forecasted };
   });
 }
 
