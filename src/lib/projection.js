@@ -328,6 +328,17 @@ export function projectBalances(data, fromDate, toDate, options = {}) {
     const dayEnd = new Date(cursor);
     dayEnd.setHours(23, 59, 59, 999);
 
+    // Record START-OF-DAY balance BEFORE applying this day's events.
+    // This matches the user's mental model: "what's my balance entering this day".
+    // After this we fire events, and the NEXT day's startOfDay shows the result.
+    const startOfDayTotal = Object.values(balances).reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0);
+    dayPoints.push({
+      date: new Date(cursor),
+      total: startOfDayTotal,
+      perAccount: { ...balances },
+    });
+
+    // Fire today's events for the next iteration's startOfDay
     while (eventIdx < events.length && events[eventIdx] && events[eventIdx].date <= dayEnd) {
       const ev = events[eventIdx];
       const evAmt = Number(ev.amount);
@@ -337,14 +348,19 @@ export function projectBalances(data, fromDate, toDate, options = {}) {
       eventIdx++;
     }
 
-    const total = Object.values(balances).reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  // Push a final post-end dayPoint capturing the balance after all events fired
+  // on the last day, so endTotal reflects "you'll have £X by end of window".
+  if (dayPoints.length > 0) {
+    const finalTotal = Object.values(balances).reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0);
+    const finalDate = new Date(end);
     dayPoints.push({
-      date: new Date(cursor),
-      total,
+      date: finalDate,
+      total: finalTotal,
       perAccount: { ...balances },
     });
-
-    cursor.setDate(cursor.getDate() + 1);
   }
 
   return { dayPoints, events };

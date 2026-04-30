@@ -2,7 +2,7 @@
 // Strategy: cache-first for all same-origin resources, network fallback.
 // Bumping CACHE_VERSION forces all clients to refetch on next visit.
 
-const CACHE_VERSION = 'v1.2.1';
+const CACHE_VERSION = 'v1.2.2';
 const CACHE_NAME = `cashflow-${CACHE_VERSION}`;
 
 // Skip waiting so a new SW activates immediately on next page load
