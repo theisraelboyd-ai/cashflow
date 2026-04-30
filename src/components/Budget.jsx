@@ -230,35 +230,34 @@ export function Budget({ data, setModal }) {
         }
       />
 
-      <div style={styles.toggleRow}>
-        <Toggle active={mode === 'realistic'} onClick={() => setMode('realistic')}>Realistic</Toggle>
-        <Toggle active={mode === 'optimistic'} onClick={() => setMode('optimistic')}>All planned</Toggle>
-      </div>
-
-      <div style={styles.toggleRow}>
+      {/* Single combined row: realistic/optimistic + horizon picker */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, alignItems: 'center' }}>
+        <Toggle active={mode === 'realistic'} onClick={() => setMode('realistic')} small>Realistic</Toggle>
+        <Toggle active={mode === 'optimistic'} onClick={() => setMode('optimistic')} small>All planned</Toggle>
+        <span style={{ width: 1, height: 16, background: t.border, margin: '0 4px' }} />
         {[1, 3, 6, 12].map((n) => (
           <Toggle key={n} active={horizon === n} onClick={() => setHorizon(n)} small>{n}m</Toggle>
         ))}
       </div>
 
-      {/* Month stepper - shows window and lets you step backwards/forwards */}
+      {/* Compact month stepper - single line, jump-to-today inline */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          marginBottom: 16,
-          padding: '8px 12px',
+          marginBottom: 12,
+          padding: '6px 8px',
           background: t.bgElev,
           border: `1px solid ${t.border}`,
-          borderRadius: 10,
+          borderRadius: 8,
         }}
       >
-        <button onClick={() => setMonthOffset(monthOffset - 1)} style={styles.iconBtn}>
-          <ChevronLeft size={16} />
+        <button onClick={() => setMonthOffset(monthOffset - 1)} style={{ ...styles.iconBtn, padding: 4 }}>
+          <ChevronLeft size={14} />
         </button>
-        <div style={{ textAlign: 'center', flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: t.text }}>{windowLabel}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'center' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: t.text }}>{windowLabel}</span>
           {monthOffset !== 0 && (
             <button
               onClick={() => setMonthOffset(0)}
@@ -266,46 +265,90 @@ export function Budget({ data, setModal }) {
                 fontSize: 10,
                 color: t.accent,
                 background: 'none',
-                border: 'none',
+                border: `1px solid ${t.accent}66`,
+                padding: '2px 7px',
+                borderRadius: 999,
                 cursor: 'pointer',
-                marginTop: 2,
-                padding: 0,
                 fontWeight: 600,
+                letterSpacing: 0.3,
               }}
             >
-              jump to today
+              today
             </button>
           )}
         </div>
-        <button onClick={() => setMonthOffset(monthOffset + 1)} style={styles.iconBtn}>
-          <ChevronRight size={16} />
+        <button onClick={() => setMonthOffset(monthOffset + 1)} style={{ ...styles.iconBtn, padding: 4 }}>
+          <ChevronRight size={14} />
         </button>
       </div>
 
-      <div style={styles.heroCard}>
-        <div style={styles.heroLabel}>End balance after {horizon}m</div>
-        <div style={{ ...styles.heroAmount, color: endTotal >= 0 ? t.text : t.expense }} className={privacy ? 'private-blur' : ''}>
-          {fmt(endTotal)}
-        </div>
-        <div style={styles.heroFoot}>
-          <span style={{ opacity: 0.7 }} className={privacy ? 'private-blur' : ''}>From {fmt(startTotal)}</span>
-          <span style={{ color: endTotal >= startTotal ? t.income : t.expense, fontWeight: 500 }} className={privacy ? 'private-blur' : ''}>
-            {endTotal >= startTotal ? '↑' : '↓'} {fmt(Math.abs(endTotal - startTotal))}
-          </span>
+      {/* Compact hero - smaller padding, end balance + delta on one optical line */}
+      <div style={{ ...styles.heroCard, padding: '14px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ ...styles.heroLabel, marginBottom: 2 }}>End {windowLabel.split(/[–-]/)[horizon === 1 ? 0 : 1] ? 'window' : `after ${horizon}m`}</div>
+            <div
+              style={{ ...styles.heroAmount, fontSize: 30, lineHeight: 1.05, color: endTotal >= 0 ? t.text : t.expense }}
+              className={privacy ? 'private-blur' : ''}
+            >
+              {fmt(endTotal)}
+            </div>
+          </div>
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginBottom: 2 }}>
+              from
+            </div>
+            <div style={{ fontSize: 13, color: t.textDim }} className={privacy ? 'private-blur' : ''}>
+              {fmt(startTotal)}
+            </div>
+            <div style={{ fontSize: 12, color: endTotal >= startTotal ? t.income : t.expense, fontWeight: 600, marginTop: 2 }} className={privacy ? 'private-blur' : ''}>
+              {endTotal >= startTotal ? '↑' : '↓'} {fmt(Math.abs(endTotal - startTotal))}
+            </div>
+          </div>
         </div>
         {firstNegative && (
-          <div style={styles.warningBar}>
-            <AlertTriangle size={14} />
+          <div style={{ ...styles.warningBar, marginTop: 10 }}>
+            <AlertTriangle size={13} />
             <span>Goes negative on {dayLabel(firstNegative.date)}</span>
           </div>
         )}
       </div>
 
-      {/* Cashflow breakdown - what the projection actually adds/subtracts */}
+      {/* Personal vs Joint context toggle - inline, just above chart */}
+      {hasMixedAccounts && (
+        <div
+          style={{
+            display: 'flex',
+            gap: 6,
+            marginTop: 10,
+            marginBottom: 4,
+            alignItems: 'center',
+          }}
+        >
+          <span style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginRight: 2 }}>
+            View:
+          </span>
+          <Toggle active={budgetView === 'personal'} onClick={() => setBudgetView('personal')} small>Personal</Toggle>
+          <Toggle active={budgetView === 'joint'} onClick={() => setBudgetView('joint')} small>
+            <Home size={10} style={{ marginRight: 3, verticalAlign: -1 }} />
+            Joint
+          </Toggle>
+        </div>
+      )}
+
+      <div style={{ marginTop: hasMixedAccounts ? 4 : 10 }}>
+        <TrajectoryChart
+          dayPoints={dayPoints}
+          events={events}
+          onTapEvent={onTapEvent}
+        />
+      </div>
+
+      {/* Cashflow breakdown - moved AFTER the chart since it's reference info */}
       {flowBreakdown.hasFlow && (
         <div
           style={{
-            marginTop: 12,
+            marginTop: 14,
             padding: '12px 14px',
             background: t.bgElev,
             border: `1px solid ${t.border}`,
@@ -353,37 +396,7 @@ export function Budget({ data, setModal }) {
         </div>
       )}
 
-      {/* Personal vs Joint context toggle - sits right above the chart it scopes */}
-      {hasMixedAccounts && (
-        <div
-          style={{
-            display: 'flex',
-            gap: 6,
-            marginTop: 18,
-            marginBottom: 8,
-            alignItems: 'center',
-          }}
-        >
-          <span style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginRight: 4 }}>
-            View:
-          </span>
-          <Toggle active={budgetView === 'personal'} onClick={() => setBudgetView('personal')} small>Personal</Toggle>
-          <Toggle active={budgetView === 'joint'} onClick={() => setBudgetView('joint')} small>
-            <Home size={10} style={{ marginRight: 3, verticalAlign: -1 }} />
-            Joint
-          </Toggle>
-        </div>
-      )}
-
-      <div style={{ marginTop: hasMixedAccounts ? 4 : 18 }}>
-        <TrajectoryChart
-          dayPoints={dayPoints}
-          events={events}
-          onTapEvent={onTapEvent}
-        />
-      </div>
-
-      <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {monthSummary.map((m, i) => (
           <div key={i} style={styles.monthRow}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>

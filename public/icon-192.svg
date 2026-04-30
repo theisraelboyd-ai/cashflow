@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="36" fill="#3d5e4a"/>
+  <text
+    x="96"
+    y="138"
+    text-anchor="middle"
+    font-family="Cormorant Garamond, Cormorant, Georgia, serif"
+    font-size="156"
+    font-weight="500"
+    font-style="italic"
+    fill="#f5f1ea"
+  >£</text>
+</svg>

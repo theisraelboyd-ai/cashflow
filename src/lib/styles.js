@@ -11,12 +11,13 @@ export function buildStyles(t, scale = 1, isDesktop = false) {
       background: t.bg,
       color: t.text,
       paddingBottom: 80,
+      paddingTop: 'env(safe-area-inset-top)',
       transition: 'background 0.25s ease, color 0.25s ease',
     },
     shell: {
       maxWidth: isDesktop ? 1600 : 480,
       margin: '0 auto',
-      paddingBottom: isDesktop ? 24 : 80,
+      paddingBottom: isDesktop ? 24 : 'calc(80px + env(safe-area-inset-bottom))',
       paddingLeft: isDesktop ? 220 : 0,  // Space for sidebar nav on desktop
       minHeight: '100vh',
       position: 'relative',
@@ -388,6 +389,7 @@ export function buildStyles(t, scale = 1, isDesktop = false) {
       maxWidth: 480,
       margin: '0 auto',
       zIndex: 50,
+      paddingBottom: 'env(safe-area-inset-bottom)',
     },
     isDesktop,
     sz,  // expose the scale function for components

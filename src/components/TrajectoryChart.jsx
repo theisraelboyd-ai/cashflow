@@ -583,18 +583,46 @@ export function TrajectoryChart({ dayPoints, events, onTapEvent, accounts = [], 
               stroke={t.bg}
               strokeWidth="1.5"
             />
-            {activeIdx === null && !privacy && (
-              <text
-                x={xDay(firstNegativeIdx)}
-                y={y(safeDayPoints[firstNegativeIdx].total || 0) - 8}
-                textAnchor="middle"
-                fontSize="9"
-                fill={t.expense}
-                fontWeight="700"
-              >
-                negative
-              </text>
-            )}
+            {activeIdx === null && !privacy && (() => {
+              // Compute label position - prefer below the dot, but flip above
+              // if there isn't space. Below works for most cases since the
+              // negative-crossing point is usually mid-chart not at the bottom.
+              const dotY = y(safeDayPoints[firstNegativeIdx].total || 0);
+              const spaceBelow = (H - padBottom) - dotY;
+              const placeAbove = spaceBelow < 22;  // need ~22px for the badge
+              const labelY = placeAbove ? dotY - 12 : dotY + 16;
+              const labelText = 'goes negative';
+              const textWidth = labelText.length * 4.5 + 8;  // rough estimate
+              const cx = xDay(firstNegativeIdx);
+              // Keep the badge inside the chart horizontally
+              const badgeX = Math.max(padLeft + 2, Math.min(W - padX - textWidth, cx - textWidth / 2));
+              return (
+                <>
+                  <rect
+                    x={badgeX}
+                    y={labelY - 7}
+                    width={textWidth}
+                    height={11}
+                    rx={5.5}
+                    fill={t.bg}
+                    stroke={t.expense}
+                    strokeWidth="0.8"
+                    opacity="0.95"
+                  />
+                  <text
+                    x={badgeX + textWidth / 2}
+                    y={labelY + 1}
+                    textAnchor="middle"
+                    fontSize="8"
+                    fill={t.expense}
+                    fontWeight="700"
+                    letterSpacing="0.3"
+                  >
+                    {labelText}
+                  </text>
+                </>
+              );
+            })()}
           </g>
         )}
 

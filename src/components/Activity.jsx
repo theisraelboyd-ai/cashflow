@@ -314,8 +314,11 @@ function JobCard({ job, setModal, data, ledger }) {
 
 function BillsContent({ data, viewData, setModal }) {
   const { styles, t, viewingAs } = useTheme();
+  const [sortMode, setSortMode] = useState('date');  // 'date' or 'amount'
 
-  // Classify each bill as 'mine' or 'household' based on its account ownership
+  // Classify each bill as 'mine' or 'household' based on its account ownership.
+  // Always split into sections - household bills are conceptually distinct
+  // even when viewing the whole household.
   const classified = useMemo(() => {
     const mine = [];
     const household = [];
@@ -343,9 +346,23 @@ function BillsContent({ data, viewData, setModal }) {
   const householdMonthly = computeMonthlyEquivalent(classified.household);
   const totalMonthly = myMonthly + householdMonthly;
 
-  const sortBills = (arr) =>
-    [...arr].sort((a, b) => {
-      // Group by frequency, then sort within
+  // Compute monthly-equivalent amount for sorting purposes (so weekly bills
+  // are compared on a like-for-like basis with monthly bills)
+  const monthlyEquiv = (b) => {
+    const amt = Math.abs(Number(b.amount) || 0);
+    if (b.frequency === 'monthly') return amt;
+    if (b.frequency === 'weekly') return amt * 4.33;
+    if (b.frequency === 'yearly') return amt / 12;
+    return amt;  // one-off treated raw
+  };
+
+  const sortBills = (arr) => {
+    if (sortMode === 'amount') {
+      // Highest cost first, regardless of frequency
+      return [...arr].sort((a, b) => monthlyEquiv(b) - monthlyEquiv(a));
+    }
+    // Chronological - by frequency group, then by day-of-month/date within group
+    return [...arr].sort((a, b) => {
       const order = { monthly: 0, weekly: 1, yearly: 2, oneoff: 3 };
       const fa = order[a.frequency] ?? 9;
       const fb = order[b.frequency] ?? 9;
@@ -356,8 +373,11 @@ function BillsContent({ data, viewData, setModal }) {
       }
       return 0;
     });
+  };
 
-  const showSplit = viewingAs !== 'household' && (classified.mine.length > 0 || classified.household.length > 0);
+  // Always show split when there's content in both - section structure is
+  // valuable for the household-vs-yours mental model regardless of view mode.
+  const showSplit = classified.mine.length > 0 && classified.household.length > 0;
 
   return (
     <div>
@@ -378,6 +398,28 @@ function BillsContent({ data, viewData, setModal }) {
       {viewData.bills.length === 0 && (
         <div style={{ marginTop: 22 }}>
           <Empty msg="No bills yet. Tap + to add one." />
+        </div>
+      )}
+
+      {viewData.bills.length > 1 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            marginTop: 18,
+            marginBottom: -8,
+          }}
+        >
+          <span style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginRight: 4 }}>
+            Sort:
+          </span>
+          <Toggle active={sortMode === 'date'} onClick={() => setSortMode('date')} small>
+            Chronological
+          </Toggle>
+          <Toggle active={sortMode === 'amount'} onClick={() => setSortMode('amount')} small>
+            By amount
+          </Toggle>
         </div>
       )}
 
