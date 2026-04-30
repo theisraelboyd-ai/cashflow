@@ -7,14 +7,43 @@ import { applyViewFilter } from '../lib/viewFilter.js';
 import { PageHeader, Toggle, Money, ViewingAsSwitch } from './atoms.jsx';
 import { TrajectoryChart } from './TrajectoryChart.jsx';
 
+// Read a value from localStorage with a fallback if missing or unparseable
+function readPref(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw == null) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed === undefined ? fallback : parsed;
+  } catch {
+    return fallback;
+  }
+}
+
+// Custom hook: useState that mirrors itself into localStorage
+function usePersistedState(key, fallback) {
+  const [value, setValue] = useState(() => readPref(key, fallback));
+  const setAndPersist = (next) => {
+    setValue(next);
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+    } catch {
+      // localStorage may be full or disabled - fail silently, state still works in-memory
+    }
+  };
+  return [value, setAndPersist];
+}
+
 export function Budget({ data, setModal, setPage, setNavIntent }) {
   const { styles, t, privacy, viewingAs, togglePrivacy } = useTheme();
-  const [horizon, setHorizon] = useState(3);
-  const [mode, setMode] = useState('realistic');
-  // monthOffset: 0 = current month, +1 = next month, -1 = previous, etc.
+  // Persist Budget view preferences across navigations and reloads.
+  // Keys are deliberately namespaced so different pages don't collide.
+  const [horizon, setHorizon] = usePersistedState('cashflow_budget_horizon', 3);
+  const [mode, setMode] = usePersistedState('cashflow_budget_mode', 'realistic');
+  // monthOffset is intentionally NOT persisted - if you switched away viewing
+  // June and come back next week, you probably want to see "now" again.
   const [monthOffset, setMonthOffset] = useState(0);
   // budgetView: 'personal' (Personal + Savings, excludes Joint) or 'joint' (only Joint)
-  const [budgetView, setBudgetView] = useState('personal');
+  const [budgetView, setBudgetView] = usePersistedState('cashflow_budget_view', 'personal');
 
   const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
 

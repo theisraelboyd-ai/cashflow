@@ -511,10 +511,8 @@ function Sparkline({ points, privacy }) {
 
   const startVal = values[0];
   const endVal = values[values.length - 1];
-  const delta = endVal - startVal;
   // Colour reflects whether the household pot will be in the black or in the red
   // by the end of the window. End value > 0 = green (sustainable), end < 0 = red (broke).
-  // This matches user mental model better than slope-based colouring.
   const isUp = endVal >= 0;
   const stroke = isUp ? t.income : t.expense;
 
@@ -590,11 +588,11 @@ function Sparkline({ points, privacy }) {
         <circle cx={x(points.length - 1)} cy={y(endVal)} r="3" fill={stroke} />
       </svg>
 
-      {/* Three-up legend underneath: now, delta, forecast */}
+      {/* Two-up legend underneath: now and forecast in 30 days */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '1fr auto 1fr',
+          gridTemplateColumns: '1fr 1fr',
           gap: 12,
           alignItems: 'baseline',
           marginTop: 8,
@@ -617,23 +615,6 @@ function Sparkline({ points, privacy }) {
             {fmtShort(startVal)}
           </div>
         </div>
-        <div
-          style={{
-            fontSize: 12,
-            color: stroke,
-            fontWeight: 700,
-            letterSpacing: 0.2,
-            textAlign: 'center',
-            padding: '3px 10px',
-            background: stroke + '14',
-            borderRadius: 999,
-            border: `1px solid ${stroke}33`,
-            alignSelf: 'center',
-          }}
-          className={privacy ? 'private-blur' : ''}
-        >
-          {isUp ? '+' : '−'}{fmtShort(Math.abs(delta))}
-        </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 9, color: t.textFaint, letterSpacing: 1.2, textTransform: 'uppercase', fontWeight: 600, marginBottom: 1 }}>
             In 30 days
@@ -641,7 +622,7 @@ function Sparkline({ points, privacy }) {
           <div
             style={{
               fontSize: 14,
-              color: t.text,
+              color: stroke,
               fontWeight: 600,
             }}
             className={privacy ? 'private-blur' : ''}
