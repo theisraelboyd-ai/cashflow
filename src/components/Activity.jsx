@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Plus, ArrowRightLeft, Home } from 'lucide-react';
 import { useTheme } from '../lib/ThemeContext.jsx';
 import { fmt, dayLabel, monthLongLabel, startOfMonth } from '../lib/format.js';
@@ -15,9 +15,25 @@ import {
 import { applyViewFilter, classifyBillOwnership } from '../lib/viewFilter.js';
 import { PageHeader, SummaryCell, Empty, Toggle, AddButton, Money, ViewingAsSwitch } from './atoms.jsx';
 
-export function Activity({ data, setModal }) {
+export function Activity({ data, setModal, navIntent, clearNavIntent }) {
   const { styles, viewingAs } = useTheme();
   const [tab, setTab] = useState('work');
+  const [highlightBillId, setHighlightBillId] = useState(null);
+
+  // Consume navigation intent on first render after Budget triggered a tap.
+  useEffect(() => {
+    if (!navIntent) return;
+    if (navIntent.tab) setTab(navIntent.tab);
+    if (navIntent.billId) setHighlightBillId(navIntent.billId);
+    if (clearNavIntent) clearNavIntent();
+  }, [navIntent, clearNavIntent]);
+
+  // Clear the highlight after a few seconds so it's not permanent
+  useEffect(() => {
+    if (!highlightBillId) return;
+    const timer = setTimeout(() => setHighlightBillId(null), 3500);
+    return () => clearTimeout(timer);
+  }, [highlightBillId]);
 
   // Filtered view of data for what's displayed
   const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
@@ -49,7 +65,7 @@ export function Activity({ data, setModal }) {
       </div>
 
       {tab === 'work' && <WorkContent data={data} viewData={viewData} setModal={setModal} />}
-      {tab === 'bills' && <BillsContent data={data} viewData={viewData} setModal={setModal} />}
+      {tab === 'bills' && <BillsContent data={data} viewData={viewData} setModal={setModal} highlightBillId={highlightBillId} />}
       {tab === 'movements' && <MovementsContent data={data} viewData={viewData} setModal={setModal} />}
     </div>
   );
@@ -312,7 +328,7 @@ function JobCard({ job, setModal, data, ledger }) {
   );
 }
 
-function BillsContent({ data, viewData, setModal }) {
+function BillsContent({ data, viewData, setModal, highlightBillId }) {
   const { styles, t, viewingAs } = useTheme();
   const [sortMode, setSortMode] = useState('date');  // 'date' or 'amount'
 
@@ -433,6 +449,7 @@ function BillsContent({ data, viewData, setModal }) {
               bills={sortBills(classified.mine)}
               setModal={setModal}
               data={data}
+              highlightBillId={highlightBillId}
             />
           )}
           {classified.household.length > 0 && (
@@ -443,6 +460,7 @@ function BillsContent({ data, viewData, setModal }) {
               setModal={setModal}
               data={data}
               isHousehold
+              highlightBillId={highlightBillId}
             />
           )}
         </>
@@ -453,13 +471,14 @@ function BillsContent({ data, viewData, setModal }) {
           bills={sortBills(viewData.bills)}
           setModal={setModal}
           data={data}
+          highlightBillId={highlightBillId}
         />
       )}
     </div>
   );
 }
 
-function BillSection({ title, monthlyTotal, bills, setModal, data, isHousehold }) {
+function BillSection({ title, monthlyTotal, bills, setModal, data, isHousehold, highlightBillId }) {
   const { t } = useTheme();
   return (
     <div style={{ marginTop: 22 }}>
@@ -482,7 +501,7 @@ function BillSection({ title, monthlyTotal, bills, setModal, data, isHousehold }
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {bills.map((b) => <BillCard key={b.id} bill={b} setModal={setModal} data={data} hideOwnerIcon={isHousehold} />)}
+        {bills.map((b) => <BillCard key={b.id} bill={b} setModal={setModal} data={data} hideOwnerIcon={isHousehold} isHighlighted={highlightBillId === b.id} />)}
       </div>
     </div>
   );
@@ -522,7 +541,7 @@ function MovementsContent({ data, viewData, setModal }) {
   );
 }
 
-function BillCard({ bill, setModal, data, hideOwnerIcon }) {
+function BillCard({ bill, setModal, data, hideOwnerIcon, isHighlighted }) {
   const { styles, t, privacy } = useTheme();
   const acc = data.accounts.find((a) => a.id === bill.accountId);
   const isHouseholdBill = !acc || acc.ownerId === 'household' || !acc.ownerId;
@@ -532,8 +551,22 @@ function BillCard({ bill, setModal, data, hideOwnerIcon }) {
     : bill.frequency === 'yearly' ? dayLabel(bill.date)
     : 'weekly';
 
+  const cardRef = useRef(null);
+  // Scroll into view when this card becomes highlighted (e.g. user came here
+  // by tapping a bill on the Budget chart).
+  useEffect(() => {
+    if (isHighlighted && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [isHighlighted]);
+
+  const highlightStyle = isHighlighted ? {
+    outline: `2px solid ${t.accent}`,
+    outlineOffset: 2,
+  } : {};
+
   return (
-    <div style={styles.billCard} onClick={() => setModal({ type: 'bill', payload: bill })}>
+    <div ref={cardRef} style={{ ...styles.billCard, ...highlightStyle, transition: 'outline-color 0.4s' }} onClick={() => setModal({ type: 'bill', payload: bill })}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
         {showIcon && (
           <Home size={13} style={{ color: t.secondary, flexShrink: 0 }} title="Household bill" />

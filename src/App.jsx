@@ -15,6 +15,9 @@ function AppShell() {
   const [data, setData, update] = useStoredData();
   const [page, setPage] = useState('home');
   const [modal, setModal] = useState(null);
+  // Intent passed from Budget → Activity: open a specific tab and scroll to a row.
+  // Cleared by Activity once it's consumed.
+  const [navIntent, setNavIntent] = useState(null);
 
   // Self-heal: if stored viewingAs points to an earner that no longer exists
   // in the current data, reset it to 'household' so the user doesn't end up
@@ -43,9 +46,9 @@ function AppShell() {
       <div style={styles.shell}>
         <ErrorBoundary key={page}>
           {page === 'home' && <Home data={data} setPage={setPage} setModal={setModal} />}
-          {page === 'activity' && <Activity data={data} setModal={setModal} />}
+          {page === 'activity' && <Activity data={data} setModal={setModal} navIntent={navIntent} clearNavIntent={() => setNavIntent(null)} />}
           {page === 'calendar' && <CalendarPage data={data} setModal={setModal} />}
-          {page === 'budget' && <Budget data={data} setModal={setModal} setPage={setPage} />}
+          {page === 'budget' && <Budget data={data} setModal={setModal} setPage={setPage} setNavIntent={setNavIntent} />}
           {page === 'wealth' && <Wealth data={data} setModal={setModal} />}
         </ErrorBoundary>
         <Nav page={page} setPage={setPage} />

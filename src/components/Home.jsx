@@ -512,12 +512,10 @@ function Sparkline({ points, privacy }) {
   const startVal = values[0];
   const endVal = values[values.length - 1];
   const delta = endVal - startVal;
-  // Tolerance: small mid-month drifts shouldn't flip the colour to red.
-  // Red only triggers if balance ends MEANINGFULLY lower than today.
-  // 5% of starting balance OR £50, whichever is bigger - so big-balance accounts
-  // don't trip on small wobble, but small-balance accounts still get flagged.
-  const tolerance = Math.max(50, Math.abs(startVal) * 0.05);
-  const isUp = delta >= -tolerance;
+  // Colour reflects whether the household pot will be in the black or in the red
+  // by the end of the window. End value > 0 = green (sustainable), end < 0 = red (broke).
+  // This matches user mental model better than slope-based colouring.
+  const isUp = endVal >= 0;
   const stroke = isUp ? t.income : t.expense;
 
   // Smooth Catmull-Rom path - tension makes it less wavy than the default

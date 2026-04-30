@@ -7,7 +7,7 @@ import { applyViewFilter } from '../lib/viewFilter.js';
 import { PageHeader, Toggle, Money, ViewingAsSwitch } from './atoms.jsx';
 import { TrajectoryChart } from './TrajectoryChart.jsx';
 
-export function Budget({ data, setModal, setPage }) {
+export function Budget({ data, setModal, setPage, setNavIntent }) {
   const { styles, t, privacy, viewingAs, togglePrivacy } = useTheme();
   const [horizon, setHorizon] = useState(3);
   const [mode, setMode] = useState('realistic');
@@ -70,6 +70,7 @@ export function Budget({ data, setModal, setPage }) {
     // so we don't surface an edit modal directly from the chart. Tapping a bill row
     // sends you to Activity → Bills where you can review the whole list properly.
     if (ev.type === 'bill') {
+      if (setNavIntent) setNavIntent({ tab: 'bills', billId: ev.billId || null });
       if (setPage) setPage('activity');
       return;
     }
