@@ -344,34 +344,110 @@ function AccountRow({ acc, setModal, data }) {
   const accountColor = t.accountColors[acc.colorIdx ?? 0] || t.accent;
   const isHouseholdAcc = acc.ownerId === 'household' || !acc.ownerId;
 
+  // Today's bills/flow for this account - quick "what's draining you right now" glance
+  const todaysFlow = useMemo(() => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+    try {
+      const events = generateEvents(data, startOfToday, endOfToday) || [];
+      const accEvents = events.filter((ev) => ev.accountId === acc.id);
+      let bills = 0;
+      let income = 0;
+      let transfersOut = 0;
+      let transfersIn = 0;
+      const billItems = [];
+      accEvents.forEach((ev) => {
+        const amt = Number(ev.amount) || 0;
+        if (ev.type === 'bill') {
+          bills += Math.abs(amt);
+          billItems.push({ label: ev.label, amount: amt });
+        } else if (ev.type === 'job' || ev.type === 'salary' || ev.type === 'extincome') {
+          income += amt;
+        } else if (ev.type === 'transfer-out') {
+          transfersOut += Math.abs(amt);
+        } else if (ev.type === 'transfer-in') {
+          transfersIn += amt;
+        }
+      });
+      const net = income + transfersIn - bills - transfersOut;
+      const total = accEvents.length;
+      return { bills, income, transfersOut, transfersIn, net, total, billItems };
+    } catch {
+      return { bills: 0, income: 0, transfersOut: 0, transfersIn: 0, net: 0, total: 0, billItems: [] };
+    }
+  }, [data, acc.id]);
+
+  // Build a short "today" summary line
+  const todayParts = [];
+  if (todaysFlow.bills > 0) todayParts.push({ label: 'bills', amount: -todaysFlow.bills, color: t.expense });
+  if (todaysFlow.transfersOut > 0) todayParts.push({ label: 'transfer out', amount: -todaysFlow.transfersOut, color: t.expense });
+  if (todaysFlow.transfersIn > 0) todayParts.push({ label: 'transfer in', amount: todaysFlow.transfersIn, color: t.income });
+  if (todaysFlow.income > 0) todayParts.push({ label: 'income', amount: todaysFlow.income, color: t.income });
+
+  // Tint the card with the account colour. Hex + alpha suffix for translucency.
+  // Theme colours are full hex (#rrggbb), so we append alpha bytes.
+  const tintBg = accountColor + '14';     // ~8% alpha
+  const tintBorder = accountColor + '55'; // ~33% alpha
+
   return (
     <div
-      style={{ ...styles.accountRow, cursor: 'pointer' }}
+      style={{
+        ...styles.accountRow,
+        cursor: 'pointer',
+        background: tintBg,
+        border: `1px solid ${tintBorder}`,
+      }}
       onClick={() => setModal({ type: 'reconcile', payload: acc })}
       title="Tap to update balance"
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
-        <div style={{ ...styles.accountDot, background: accountColor }} />
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500, fontSize: 15, color: t.text }}>
-            {acc.name}
-            {isHouseholdAcc && (
-              <HomeIcon size={12} style={{ color: t.secondary, opacity: 0.8 }} title="Household account" />
-            )}
-          </div>
-          <div style={styles.accountMeta}>
-            {daysSince === 0 ? 'updated today · tap to update' : `${daysSince}d ago · tap to update`}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+          <div style={{ ...styles.accountDot, background: accountColor }} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500, fontSize: 15, color: t.text }}>
+              {acc.name}
+              {isHouseholdAcc && (
+                <HomeIcon size={12} style={{ color: t.secondary, opacity: 0.8 }} title="Household account" />
+              )}
+            </div>
+            <div style={styles.accountMeta}>
+              {daysSince === 0 ? 'updated today · tap to update' : `${daysSince}d ago · tap to update`}
+            </div>
           </div>
         </div>
+        <div style={{ textAlign: 'right' }}>
+          <div className={privacy ? 'private-blur' : ''} style={styles.accountBal}>{fmt(acc.balance)}</div>
+          {showVariance && (
+            <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }} className={privacy ? 'private-blur' : ''}>
+              expected {fmt(expected)}
+            </div>
+          )}
+        </div>
       </div>
-      <div style={{ textAlign: 'right' }}>
-        <div className={privacy ? 'private-blur' : ''} style={styles.accountBal}>{fmt(acc.balance)}</div>
-        {showVariance && (
-          <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }} className={privacy ? 'private-blur' : ''}>
-            expected {fmt(expected)}
-          </div>
-        )}
-      </div>
+      {todayParts.length > 0 && (
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '4px 12px',
+          marginTop: 10,
+          paddingTop: 10,
+          borderTop: `1px solid ${tintBorder}`,
+          fontSize: 11,
+          color: t.textFaint,
+        }}>
+          <span style={{ textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>today</span>
+          {todayParts.map((part, i) => (
+            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ color: t.textDim }}>{part.label}</span>
+              <span style={{ color: part.color, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
+                {part.amount >= 0 ? '+' : '−'}{fmt(Math.abs(part.amount))}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -436,7 +512,12 @@ function Sparkline({ points, privacy }) {
   const startVal = values[0];
   const endVal = values[values.length - 1];
   const delta = endVal - startVal;
-  const isUp = delta >= 0;
+  // Tolerance: small mid-month drifts shouldn't flip the colour to red.
+  // Red only triggers if balance ends MEANINGFULLY lower than today.
+  // 5% of starting balance OR £50, whichever is bigger - so big-balance accounts
+  // don't trip on small wobble, but small-balance accounts still get flagged.
+  const tolerance = Math.max(50, Math.abs(startVal) * 0.05);
+  const isUp = delta >= -tolerance;
   const stroke = isUp ? t.income : t.expense;
 
   // Smooth Catmull-Rom path - tension makes it less wavy than the default

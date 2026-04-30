@@ -7,7 +7,7 @@ import { applyViewFilter } from '../lib/viewFilter.js';
 import { PageHeader, Toggle, Money, ViewingAsSwitch } from './atoms.jsx';
 import { TrajectoryChart } from './TrajectoryChart.jsx';
 
-export function Budget({ data, setModal }) {
+export function Budget({ data, setModal, setPage }) {
   const { styles, t, privacy, viewingAs, togglePrivacy } = useTheme();
   const [horizon, setHorizon] = useState(3);
   const [mode, setMode] = useState('realistic');
@@ -66,10 +66,14 @@ export function Budget({ data, setModal }) {
 
   const onTapEvent = (ev) => {
     if (!setModal) return;
-    if (ev.type === 'bill' && ev.billId) {
-      const bill = data.bills.find((b) => b.id === ev.billId);
-      if (bill) setModal({ type: 'bill', payload: bill });
-    } else if (ev.type === 'job' && ev.jobId) {
+    // Bills are recurring schedules - editing them affects every month going forward,
+    // so we don't surface an edit modal directly from the chart. Tapping a bill row
+    // sends you to Activity → Bills where you can review the whole list properly.
+    if (ev.type === 'bill') {
+      if (setPage) setPage('activity');
+      return;
+    }
+    if (ev.type === 'job' && ev.jobId) {
       const job = data.jobs.find((j) => j.id === ev.jobId);
       if (job) setModal({ type: 'job', payload: job });
     } else if (ev.type === 'salary' && ev.salaryId) {
