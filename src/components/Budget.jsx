@@ -114,12 +114,29 @@ export function Budget({ data, setModal }) {
         balance: a.forecastedBalance,
       }));
 
-      // Step 2: from the today-anchor, walk to projStart (forward or back) so
-      // the chart can begin at the correct projStart balance.
+      // Step 2: align the chart starting point with projStart.
+      //
+      // CRITICAL: same-calendar-day check. If projStart falls on the same calendar
+      // day as today, do NOT reverse-walk to midnight - that exposes a time-of-day
+      // artifact where events scheduled "for today" appear to have not happened yet
+      // at midnight, making the chart show a misleading dip.
+      // Just use today's forecasted balance as the start; the forward projection
+      // will apply today's events naturally and avoid the dip.
+      const projStartDay = new Date(projStart);
+      projStartDay.setHours(0, 0, 0, 0);
+      const todayDay = new Date(today);
+      todayDay.setHours(0, 0, 0, 0);
+      const sameCalendarDay = projStartDay.getTime() === todayDay.getTime();
+
       const adjustedAccounts = todayAnchored.map((a) => {
         let bal = Number(a.balance) || 0;
+        if (sameCalendarDay) {
+          // Use forecasted balance directly; projection runs forward from today
+          return { ...a, balance: bal };
+        }
         try {
           if (projStart < today) {
+            // Window starts in the past — reverse-walk events that ran since projStart
             const past = generateEvents(budgetData, projStart, today, opts) || [];
             past.forEach((ev) => {
               if (ev && ev.accountId === a.id && ev.date && ev.date <= today) {
@@ -127,6 +144,7 @@ export function Budget({ data, setModal }) {
               }
             });
           } else if (projStart > today) {
+            // Window starts in the future — apply events between now and then
             const future = generateEvents(budgetData, today, projStart, opts) || [];
             future.forEach((ev) => {
               if (ev && ev.accountId === a.id && ev.date && ev.date < projStart) {
@@ -140,7 +158,12 @@ export function Budget({ data, setModal }) {
         return { ...a, balance: bal };
       });
 
-      const result = projectBalances({ ...budgetData, accounts: adjustedAccounts }, projStart, endDate, opts);
+      // For same-calendar-day, project from `today` (not projStart midnight)
+      // so events scheduled for today DON'T fire again — they're already
+      // baked into the forecasted balance via forecastCurrentBalances.
+      const effectiveStart = sameCalendarDay ? today : projStart;
+      const projOpts = sameCalendarDay ? { ...opts, skipEventsAtStart: true } : opts;
+      const result = projectBalances({ ...budgetData, accounts: adjustedAccounts }, effectiveStart, endDate, projOpts);
       return {
         dayPoints: Array.isArray(result?.dayPoints) ? result.dayPoints : [],
         events: Array.isArray(result?.events) ? result.events : [],

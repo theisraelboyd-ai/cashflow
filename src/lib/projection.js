@@ -283,6 +283,10 @@ export function generateEvents(data, start, end, options = {}) {
 
 export function projectBalances(data, fromDate, toDate, options = {}) {
   const start = new Date(fromDate);
+  // Track the original "live" start before normalising to midnight - we need
+  // it for the skipEventsAtStart logic so we skip events that fired between
+  // midnight and the caller's actual "now".
+  const liveStartMs = start.getTime();
   start.setHours(0, 0, 0, 0);
   const end = new Date(toDate);
   end.setHours(23, 59, 59, 999);
@@ -299,6 +303,16 @@ export function projectBalances(data, fromDate, toDate, options = {}) {
   const dayPoints = [];
   const cursor = new Date(start);
   let eventIdx = 0;
+
+  // skipEventsAtStart: when the caller has forecast-advanced account balances
+  // through "now" (i.e. today's already-fired events are baked in), skip
+  // events at-or-before liveStartMs to avoid double-counting.
+  // Default false to preserve old behaviour for callers that haven't forecast first.
+  if (options.skipEventsAtStart) {
+    while (eventIdx < events.length && events[eventIdx] && events[eventIdx].date.getTime() <= liveStartMs) {
+      eventIdx++;
+    }
+  }
 
   // Guard against pathological inputs (e.g. start > end, NaN dates)
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) {
@@ -353,7 +367,7 @@ export function projectBalances(data, fromDate, toDate, options = {}) {
  * so the bank balance has changed since the user last reconciled".
  */
 export function forecastCurrentBalances(data, today) {
-  const todayMs = new Date(today).setHours(23, 59, 59, 999);
+  const todayMs = new Date(today).getTime();
   const todayDate = new Date(todayMs);
 
   return (data.accounts || []).map((account) => {
@@ -363,11 +377,14 @@ export function forecastCurrentBalances(data, today) {
       const lastUpdatedMs = new Date(account.lastUpdated || todayMs).getTime();
 
       if (!Number.isFinite(lastUpdatedMs) || lastUpdatedMs >= todayMs) {
-        // Reconciled today or future-dated — no drift to compute
+        // Reconciled at-or-after the "today" cutoff — no drift to compute.
         return { ...account, anchorBalance, forecastedBalance: anchorBalance };
       }
 
-      // Walk events from lastUpdated → today, applying the ones that hit this account.
+      // Walk events strictly between lastUpdated and today.
+      // Note: the projection that follows this forecast should start AT or
+      // AFTER `today`, so events whose date <= todayMs are owned by the
+      // forecast, and events > todayMs are owned by the projection.
       const lastUpdated = new Date(lastUpdatedMs);
       const events = generateEvents(data, lastUpdated, todayDate, { includeSpeculative: false, likelyWeight: 1.0 }) || [];
 
@@ -376,7 +393,7 @@ export function forecastCurrentBalances(data, today) {
         if (!ev || ev.accountId !== account.id) continue;
         const evMs = new Date(ev.date).getTime();
         if (!Number.isFinite(evMs)) continue;
-        // Only events strictly AFTER lastUpdated count
+        // Only events strictly AFTER lastUpdated and at-or-before today count
         if (evMs <= lastUpdatedMs) continue;
         if (evMs > todayMs) continue;
         if (ev.appliedToBalance) continue;

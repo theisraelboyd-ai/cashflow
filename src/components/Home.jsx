@@ -15,7 +15,9 @@ export function Home({ data, setPage, setModal }) {
   const totalLiquid = viewData.accounts.reduce((s, a) => s + Number(a.balance), 0);
 
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Use actual current time (not midnight) so we don't double-count events
+  // that fired earlier today: forecastCurrentBalances applies them, then
+  // projection starts AFTER them.
   const horizon = addDays(today, 30);
 
   const projection = useMemo(() => {
@@ -28,7 +30,7 @@ export function Home({ data, setPage, setModal }) {
         ...viewData,
         accounts: forecasted.map((a) => ({ ...a, balance: a.forecastedBalance })),
       };
-      const result = projectBalances(todayAnchored, today, horizon, { includeSpeculative: false, likelyWeight: 0.75 });
+      const result = projectBalances(todayAnchored, today, horizon, { includeSpeculative: false, likelyWeight: 0.75, skipEventsAtStart: true });
       return {
         dayPoints: Array.isArray(result?.dayPoints) ? result.dayPoints : [],
         events: Array.isArray(result?.events) ? result.events : [],
@@ -116,7 +118,7 @@ export function Home({ data, setPage, setModal }) {
       salaries: [],
     };
     try {
-      const proj = projectBalances(householdData, today, horizon, { includeSpeculative: false, likelyWeight: 0.75 });
+      const proj = projectBalances(householdData, today, horizon, { includeSpeculative: false, likelyWeight: 0.75, skipEventsAtStart: true });
       return (proj.dayPoints || []).map((p) => ({ value: p.total, date: p.date }));
     } catch {
       return [];
