@@ -64,22 +64,32 @@ export function useStoredData() {
           assets: parsed.assets || [],
           reconciliations: parsed.reconciliations || [],
         };
+        // Run schema migrations ONCE per version, not on every load.
+        const fromVersion = parsed.schemaVersion || 0;
         // migrate legacy 'service' tax mode -> 'malta'
         merged.jobs = merged.jobs.map((j) => ({
           ...j,
           taxMode: j.taxMode === 'service' ? 'malta' : j.taxMode,
           earnerId: j.earnerId || 'self',
         }));
-        // Schema v5: add ownerId to accounts (defaults to household)
-        merged.accounts = merged.accounts.map((a) => ({
-          ...a,
-          ownerId: a.ownerId || 'household',
-        }));
+        // Schema v5: add ownerId to accounts. ONLY runs if the data was on
+        // schema 4 or below — once accounts have been classified, we never
+        // reset their ownership. Also: only fill in genuinely-missing values
+        // (undefined/null), not falsy strings like '' which could indicate
+        // user intent that we don't want to clobber.
+        if (fromVersion < 5) {
+          merged.accounts = merged.accounts.map((a) => ({
+            ...a,
+            ownerId: (a.ownerId === undefined || a.ownerId === null) ? 'household' : a.ownerId,
+          }));
+        }
         // Schema v6: bills no longer have ownerId. Ownership derived from account.
-        merged.bills = merged.bills.map((b) => {
-          const { ownerId, ...rest } = b;
-          return rest;
-        });
+        if (fromVersion < 6) {
+          merged.bills = merged.bills.map((b) => {
+            const { ownerId, ...rest } = b;
+            return rest;
+          });
+        }
         merged.schemaVersion = 6;
         setData(merged);
       } else {

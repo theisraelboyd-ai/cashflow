@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useStoredData } from './hooks/useStoredData.js';
 import { ThemeProvider, useTheme } from './lib/ThemeContext.jsx';
 import { Home } from './components/Home.jsx';
@@ -11,10 +11,22 @@ import { Nav } from './components/Nav.jsx';
 import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 
 function AppShell() {
-  const { styles } = useTheme();
+  const { styles, viewingAs, setViewingAs } = useTheme();
   const [data, setData, update] = useStoredData();
   const [page, setPage] = useState('home');
   const [modal, setModal] = useState(null);
+
+  // Self-heal: if stored viewingAs points to an earner that no longer exists
+  // in the current data, reset it to 'household' so the user doesn't end up
+  // looking at an empty filtered view because of stale localStorage state.
+  useEffect(() => {
+    if (!data) return;
+    if (viewingAs === 'household') return;
+    const earnerIds = new Set((data.earners || []).map((e) => e.id));
+    if (!earnerIds.has(viewingAs)) {
+      setViewingAs('household');
+    }
+  }, [data, viewingAs, setViewingAs]);
 
   if (!data) {
     return (

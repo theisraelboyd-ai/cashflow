@@ -56,17 +56,25 @@ export function filterTransfers(transfers, viewingAs, accounts) {
 }
 
 // Apply view filter to entire data object.
+// Defensive: if viewingAs points to an earner that no longer exists in data,
+// fall back to 'household' so the user doesn't end up looking at an empty
+// filtered view because of stale localStorage state.
 export function applyViewFilter(data, viewingAs) {
-  if (viewingAs === 'household') return data;
-  const accounts = filterAccounts(data.accounts || [], viewingAs);
+  const earners = data.earners || [];
+  const validEarnerIds = new Set(earners.map((e) => e.id));
+  const effectiveView = (viewingAs === 'household' || validEarnerIds.has(viewingAs))
+    ? viewingAs
+    : 'household';
+  if (effectiveView === 'household') return data;
+  const accounts = filterAccounts(data.accounts || [], effectiveView);
   return {
     ...data,
     accounts,
-    bills: filterBills(data.bills || [], viewingAs, data.accounts || []),
-    jobs: filterJobs(data.jobs || [], viewingAs),
-    salaries: filterSalaries(data.salaries || [], viewingAs),
-    externalIncome: filterExtIncome(data.externalIncome || [], viewingAs, data.accounts || []),
-    transfers: filterTransfers(data.transfers || [], viewingAs, data.accounts || []),
+    bills: filterBills(data.bills || [], effectiveView, data.accounts || []),
+    jobs: filterJobs(data.jobs || [], effectiveView),
+    salaries: filterSalaries(data.salaries || [], effectiveView),
+    externalIncome: filterExtIncome(data.externalIncome || [], effectiveView, data.accounts || []),
+    transfers: filterTransfers(data.transfers || [], effectiveView, data.accounts || []),
   };
 }
 

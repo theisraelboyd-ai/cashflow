@@ -1203,6 +1203,9 @@ function SettingsForm({ data, update, setData, close, setModal }) {
         </div>
       </div>
 
+      {/* Diagnostics - quick view of data integrity */}
+      <Diagnostics data={data} update={update} />
+
       <div style={{ marginTop: 28, padding: 14, background: t.expenseBg, border: `1px solid ${t.expense}`, borderRadius: 12 }}>
         <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, color: t.expense, marginBottom: 6 }}>Danger</div>
         <button style={{ ...styles.btnDanger, width: '100%', justifyContent: 'flex-start', padding: '10px 14px' }} onClick={onReset}>
@@ -1213,6 +1216,200 @@ function SettingsForm({ data, update, setData, close, setModal }) {
       <div style={styles.formActions}>
         <button style={styles.btnPrimary} onClick={close}>Done</button>
       </div>
+    </div>
+  );
+}
+
+// Diagnostics panel - shows accounts and their ownership tags so the user can
+// spot misconfigurations and fix them inline without needing to re-import data.
+function Diagnostics({ data, update }) {
+  const { styles, t } = useTheme();
+  const [open, setOpen] = useState(false);
+
+  const earners = data.earners || [];
+  const accounts = data.accounts || [];
+
+  // Detect anomalies
+  const validOwnerIds = new Set(['household', ...earners.map((e) => e.id)]);
+  const issues = [];
+  accounts.forEach((a) => {
+    if (!a.ownerId) {
+      issues.push({ accId: a.id, msg: `${a.name} has no owner tag` });
+    } else if (!validOwnerIds.has(a.ownerId)) {
+      issues.push({ accId: a.id, msg: `${a.name} is tagged "${a.ownerId}" but no such earner exists` });
+    }
+  });
+
+  const allHousehold = accounts.length > 0 && accounts.every((a) => !a.ownerId || a.ownerId === 'household');
+  const hasMultipleEarners = earners.length >= 1;
+  if (allHousehold && hasMultipleEarners) {
+    issues.push({ accId: null, msg: 'All accounts are tagged household. Personal/Joint split won\'t work until at least one account is assigned to a specific person.' });
+  }
+
+  const setOwner = (accId, newOwner) => {
+    update((d) => {
+      const acc = d.accounts.find((a) => a.id === accId);
+      if (acc) acc.ownerId = newOwner;
+    });
+  };
+
+  return (
+    <div style={{ marginTop: 22 }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          width: '100%',
+          padding: '10px 14px',
+          background: t.bgElev,
+          border: `1px solid ${t.border}`,
+          borderRadius: 10,
+          color: t.text,
+          fontSize: 13,
+          fontWeight: 600,
+          letterSpacing: 0.3,
+          cursor: 'pointer',
+          textAlign: 'left',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <span>
+          Diagnostics
+          {issues.length > 0 && (
+            <span
+              style={{
+                marginLeft: 8,
+                fontSize: 10,
+                padding: '2px 7px',
+                borderRadius: 999,
+                background: t.expenseBg,
+                color: t.expense,
+                fontWeight: 700,
+              }}
+            >
+              {issues.length} issue{issues.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </span>
+        <span style={{ fontSize: 11, color: t.textFaint }}>{open ? '▼' : '▶'}</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '12px 14px', background: t.bgInset || t.bgElev, border: `1px solid ${t.border}`, borderTop: 'none', borderRadius: '0 0 10px 10px', fontSize: 12 }}>
+          {/* Earners list */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginBottom: 6 }}>
+              Earners ({earners.length})
+            </div>
+            {earners.length === 0 ? (
+              <div style={{ color: t.textFaint, fontStyle: 'italic' }}>No earners defined.</div>
+            ) : (
+              earners.map((e) => (
+                <div key={e.id} style={{ color: t.textDim, fontSize: 12, marginBottom: 2 }}>
+                  • {e.name} <span style={{ color: t.textFaint, fontFamily: 'monospace', fontSize: 10 }}>({e.id})</span>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Accounts list with current ownership */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 10, color: t.textFaint, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginBottom: 6 }}>
+              Account ownership
+            </div>
+            {accounts.length === 0 ? (
+              <div style={{ color: t.textFaint, fontStyle: 'italic' }}>No accounts.</div>
+            ) : (
+              accounts.map((a) => {
+                const ownerLabel = !a.ownerId
+                  ? '(no owner — defaults to household)'
+                  : a.ownerId === 'household'
+                    ? 'Household'
+                    : (earners.find((e) => e.id === a.ownerId)?.name || `Unknown: ${a.ownerId}`);
+                const isProblem = !a.ownerId || (a.ownerId !== 'household' && !earners.find((e) => e.id === a.ownerId));
+                return (
+                  <div
+                    key={a.id}
+                    style={{
+                      padding: '8px 10px',
+                      marginBottom: 6,
+                      background: t.bg,
+                      border: `1px solid ${isProblem ? t.expense + '66' : t.border}`,
+                      borderRadius: 8,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                      <span style={{ fontWeight: 600, color: t.text, fontSize: 13 }}>{a.name}</span>
+                      <span style={{ fontSize: 11, color: isProblem ? t.expense : t.textDim }}>
+                        {ownerLabel}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      <button
+                        onClick={() => setOwner(a.id, 'household')}
+                        style={{
+                          padding: '3px 8px',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          background: a.ownerId === 'household' ? t.accent : 'transparent',
+                          color: a.ownerId === 'household' ? '#fff' : t.textDim,
+                          border: `1px solid ${a.ownerId === 'household' ? t.accent : t.border}`,
+                          borderRadius: 999,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Household
+                      </button>
+                      {earners.map((e) => (
+                        <button
+                          key={e.id}
+                          onClick={() => setOwner(a.id, e.id)}
+                          style={{
+                            padding: '3px 8px',
+                            fontSize: 10,
+                            fontWeight: 600,
+                            background: a.ownerId === e.id ? t.accent : 'transparent',
+                            color: a.ownerId === e.id ? '#fff' : t.textDim,
+                            border: `1px solid ${a.ownerId === e.id ? t.accent : t.border}`,
+                            borderRadius: 999,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {e.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Issues */}
+          {issues.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, color: t.expense, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginBottom: 6 }}>
+                Detected issues
+              </div>
+              {issues.map((iss, i) => (
+                <div key={i} style={{ color: t.expense, fontSize: 11, marginBottom: 4, paddingLeft: 8 }}>
+                  • {iss.msg}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Storage info */}
+          <div style={{ marginTop: 14, paddingTop: 10, borderTop: `1px solid ${t.border}`, fontSize: 10, color: t.textFaint }}>
+            Schema v{data.schemaVersion} ·{' '}
+            {accounts.length} account{accounts.length === 1 ? '' : 's'} ·{' '}
+            {(data.bills || []).length} bill{(data.bills || []).length === 1 ? '' : 's'} ·{' '}
+            {(data.jobs || []).length} job{(data.jobs || []).length === 1 ? '' : 's'} ·{' '}
+            {(data.transfers || []).length} transfer{(data.transfers || []).length === 1 ? '' : 's'}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
