@@ -12,7 +12,6 @@ export function Home({ data, setPage, setModal }) {
 
   // Apply view filter for displayed data
   const viewData = useMemo(() => applyViewFilter(data, viewingAs), [data, viewingAs]);
-  const totalLiquid = viewData.accounts.reduce((s, a) => s + Number(a.balance), 0);
 
   const today = new Date();
   // Use actual current time (not midnight) so we don't double-count events
@@ -20,15 +19,34 @@ export function Home({ data, setPage, setModal }) {
   // projection starts AFTER them.
   const horizon = addDays(today, 30);
 
+  // Forecast each account's "balance right now" by walking scheduled events
+  // from lastUpdated to today. This way the displayed balance reflects what
+  // your bank likely says today, not a stale reconciliation snapshot.
+  const forecastedAccounts = useMemo(
+    () => forecastCurrentBalances(viewData, today),
+    [viewData]
+  );
+
+  // Map account.id → forecastedBalance for AccountRow lookup
+  const forecastedById = useMemo(() => {
+    const m = new Map();
+    forecastedAccounts.forEach((a) => m.set(a.id, a.forecastedBalance));
+    return m;
+  }, [forecastedAccounts]);
+
+  // Total Liquid sums forecasted balances - the headline number on the page
+  // should reflect "where you probably are right now", not "where you were
+  // when you last reconciled".
+  const totalLiquid = forecastedAccounts.reduce(
+    (s, a) => s + (Number.isFinite(a.forecastedBalance) ? a.forecastedBalance : Number(a.balance) || 0),
+    0
+  );
+
   const projection = useMemo(() => {
-    // Forecast each account's current balance from its lastUpdated to today,
-    // then project forward. This way the projection starts from where the
-    // user actually is now, not from a stale reconciled value.
     try {
-      const forecasted = forecastCurrentBalances(viewData, today);
       const todayAnchored = {
         ...viewData,
-        accounts: forecasted.map((a) => ({ ...a, balance: a.forecastedBalance })),
+        accounts: forecastedAccounts.map((a) => ({ ...a, balance: a.forecastedBalance })),
       };
       const result = projectBalances(todayAnchored, today, horizon, { includeSpeculative: false, likelyWeight: 0.75, skipEventsAtStart: true });
       return {
@@ -39,7 +57,7 @@ export function Home({ data, setPage, setModal }) {
       console.error('Home projection failed', e);
       return { dayPoints: [], events: [] };
     }
-  }, [viewData]);
+  }, [viewData, forecastedAccounts]);
   const projectedTotal = projection.dayPoints[projection.dayPoints.length - 1]?.total ?? totalLiquid;
   const firstNegative = projection.dayPoints.find((p) => p && p.total < 0);
 
@@ -179,9 +197,9 @@ export function Home({ data, setPage, setModal }) {
         </button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {viewData.accounts.map((acc) => (
-          <AccountRow key={acc.id} acc={acc} setModal={setModal} data={data} />
+          <AccountRow key={acc.id} acc={acc} setModal={setModal} data={data} forecastedBalance={forecastedById.get(acc.id)} />
         ))}
       </div>
 
@@ -328,19 +346,19 @@ function JointHealthCard({ health, sparklinePoints }) {
   );
 }
 
-function AccountRow({ acc, setModal, data }) {
+function AccountRow({ acc, setModal, data, forecastedBalance }) {
   const { styles, t, privacy } = useTheme();
   const lastUpdate = new Date(acc.lastUpdated);
   const today = new Date();
   const daysSince = Math.floor((today - lastUpdate) / (1000 * 60 * 60 * 24));
 
-  let expected = Number(acc.balance);
-  if (daysSince > 0) {
-    const events = generateEvents(data, lastUpdate, today);
-    events.forEach((ev) => { if (ev.accountId === acc.id) expected += ev.amount; });
-  }
+  const anchor = Number(acc.balance) || 0;
+  const forecast = Number.isFinite(forecastedBalance) ? forecastedBalance : anchor;
+  // Headline = what your bank likely says today (forecasted).
+  // Show drift if forecasted differs meaningfully from anchor (>£1).
+  const drift = forecast - anchor;
+  const showDrift = Math.abs(drift) > 1;
 
-  const showVariance = daysSince > 0 && Math.abs(Number(acc.balance) - expected) > 0.01;
   const accountColor = t.accountColors[acc.colorIdx ?? 0] || t.accent;
   const isHouseholdAcc = acc.ownerId === 'household' || !acc.ownerId;
 
@@ -386,10 +404,12 @@ function AccountRow({ acc, setModal, data }) {
   if (todaysFlow.transfersIn > 0) todayParts.push({ label: 'transfer in', amount: todaysFlow.transfersIn, color: t.income });
   if (todaysFlow.income > 0) todayParts.push({ label: 'income', amount: todaysFlow.income, color: t.income });
 
-  // Tint the card with the account colour. Hex + alpha suffix for translucency.
-  // Theme colours are full hex (#rrggbb), so we append alpha bytes.
-  const tintBg = accountColor + '14';     // ~8% alpha
-  const tintBorder = accountColor + '55'; // ~33% alpha
+  const tintBg = accountColor + '14';
+  const tintBorder = accountColor + '55';
+
+  const driftLabel = daysSince === 0
+    ? 'tap to update'
+    : `${daysSince}d ago · tap to update`;
 
   return (
     <div
@@ -412,16 +432,30 @@ function AccountRow({ acc, setModal, data }) {
                 <HomeIcon size={12} style={{ color: t.secondary, opacity: 0.8 }} title="Household account" />
               )}
             </div>
-            <div style={styles.accountMeta}>
-              {daysSince === 0 ? 'updated today · tap to update' : `${daysSince}d ago · tap to update`}
-            </div>
+            <div style={styles.accountMeta}>{driftLabel}</div>
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div className={privacy ? 'private-blur' : ''} style={styles.accountBal}>{fmt(acc.balance)}</div>
-          {showVariance && (
-            <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }} className={privacy ? 'private-blur' : ''}>
-              expected {fmt(expected)}
+          {/* Headline = forecasted balance ("where you probably are right now").
+              When there's no drift (just reconciled), this equals the anchor anyway. */}
+          <div className={privacy ? 'private-blur' : ''} style={styles.accountBal}>
+            {fmt(forecast)}
+          </div>
+          {showDrift && (
+            <div
+              style={{
+                fontSize: 11,
+                color: t.textDim,
+                marginTop: 4,
+                lineHeight: 1.3,
+              }}
+              className={privacy ? 'private-blur' : ''}
+            >
+              <span style={{ color: t.textFaint }}>anchor </span>
+              <span>{fmt(anchor)}</span>
+              <span style={{ color: drift < 0 ? t.expense : t.income, fontWeight: 600, marginLeft: 6 }}>
+                {drift < 0 ? '−' : '+'}{fmt(Math.abs(drift))}
+              </span>
             </div>
           )}
         </div>
@@ -430,16 +464,17 @@ function AccountRow({ acc, setModal, data }) {
         <div style={{
           display: 'flex',
           flexWrap: 'wrap',
-          gap: '4px 12px',
-          marginTop: 10,
-          paddingTop: 10,
+          gap: '6px 14px',
+          marginTop: 14,
+          paddingTop: 12,
           borderTop: `1px solid ${tintBorder}`,
           fontSize: 11,
           color: t.textFaint,
+          alignItems: 'center',
         }}>
           <span style={{ textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>today</span>
           {todayParts.map((part, i) => (
-            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
               <span style={{ color: t.textDim }}>{part.label}</span>
               <span style={{ color: part.color, fontWeight: 600 }} className={privacy ? 'private-blur' : ''}>
                 {part.amount >= 0 ? '+' : '−'}{fmt(Math.abs(part.amount))}
